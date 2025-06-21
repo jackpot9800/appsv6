@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -19,7 +19,7 @@ import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 
 const { width, height } = Dimensions.get('window');
 
-// CORRECTION: Import conditionnel de TVEventHandler
+// Import conditionnel de TVEventHandler avec gestion d'erreur robuste
 let TVEventHandler: any = null;
 if (Platform.OS === 'android' || Platform.OS === 'ios') {
   try {
@@ -41,10 +41,81 @@ export default function PresentationScreen() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [imageLoadError, setImageLoadError] = useState<{[key: number]: boolean}>({});
   const [loopCount, setLoopCount] = useState(0);
-  const [focusedControlIndex, setFocusedControlIndex] = useState(1); // Commencer sur le bouton play/pause
+  const [focusedControlIndex, setFocusedControlIndex] = useState(1);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [memoryOptimization, setMemoryOptimization] = useState(false);
+  
+  // Refs pour la gestion des timers et événements
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const hideControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const tvEventHandlerRef = useRef<any>(null);
+  const transitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const imagePreloadRef = useRef<{[key: number]: boolean}>({});
+  const lastSlideChangeRef = useRef<number>(0);
+  const performanceMonitorRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Nettoyage complet des ressources
+  const cleanupResources = useCallback(() => {
+    console.log('=== CLEANING UP RESOURCES ===');
+    
+    // Arrêter tous les timers
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+      hideControlsTimeoutRef.current = null;
+    }
+    
+    if (transitionTimeoutRef.current) {
+      clearTimeout(transitionTimeoutRef.current);
+      transitionTimeoutRef.current = null;
+    }
+    
+    if (performanceMonitorRef.current) {
+      clearInterval(performanceMonitorRef.current);
+      performanceMonitorRef.current = null;
+    }
+    
+    // Désactiver le gestionnaire TV
+    if (tvEventHandlerRef.current) {
+      try {
+        tvEventHandlerRef.current.disable();
+        tvEventHandlerRef.current = null;
+      } catch (error) {
+        console.log('Error disabling TV event handler:', error);
+      }
+    }
+    
+    // Nettoyer les erreurs d'images
+    setImageLoadError({});
+    imagePreloadRef.current = {};
+  }, []);
+
+  // Monitoring des performances pour détecter les fuites mémoire
+  const startPerformanceMonitoring = useCallback(() => {
+    if (performanceMonitorRef.current) return;
+    
+    performanceMonitorRef.current = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastChange = now - lastSlideChangeRef.current;
+      
+      // Si aucun changement de slide depuis plus de 2 minutes en mode boucle
+      if (isLooping && isPlaying && timeSinceLastChange > 120000) {
+        console.warn('=== POTENTIAL MEMORY LEAK DETECTED ===');
+        console.warn('No slide change for 2 minutes, restarting presentation');
+        restartPresentation();
+      }
+      
+      // Activer l'optimisation mémoire après 10 boucles
+      if (loopCount >= 10 && !memoryOptimization) {
+        console.log('=== ENABLING MEMORY OPTIMIZATION ===');
+        setMemoryOptimization(true);
+      }
+    }, 30000); // Vérifier toutes les 30 secondes
+  }, [isLooping, isPlaying, loopCount, memoryOptimization]);
 
   useEffect(() => {
     loadPresentation();
@@ -58,36 +129,20 @@ export default function PresentationScreen() {
       setIsLooping(true);
     }
 
-    // CORRECTION: Configuration spécifique Fire TV seulement sur les plateformes supportées
+    // Configuration Fire TV avec gestion d'erreur
     if (Platform.OS === 'android' && TVEventHandler) {
       setupFireTVControls();
     }
     
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      if (hideControlsTimeoutRef.current) {
-        clearTimeout(hideControlsTimeoutRef.current);
-        hideControlsTimeoutRef.current = null;
-      }
-      if (tvEventHandlerRef.current) {
-        try {
-          tvEventHandlerRef.current.disable();
-        } catch (error) {
-          console.log('Error disabling TV event handler:', error);
-        }
-      }
-    };
+    // Démarrer le monitoring des performances
+    startPerformanceMonitoring();
+    
+    return cleanupResources;
   }, []);
 
-  // CORRECTION: Configuration des contrôles Fire TV avec vérifications
-  const setupFireTVControls = () => {
-    if (!TVEventHandler) {
-      console.log('TVEventHandler not available');
-      return;
-    }
+  // Configuration des contrôles Fire TV optimisée
+  const setupFireTVControls = useCallback(() => {
+    if (!TVEventHandler || tvEventHandlerRef.current) return;
 
     try {
       tvEventHandlerRef.current = new TVEventHandler();
@@ -126,53 +181,74 @@ export default function PresentationScreen() {
             toggleControls();
             break;
           case 'back':
-            router.back();
+            // Confirmation avant de quitter en mode boucle
+            if (isLooping && isPlaying) {
+              Alert.alert(
+                'Quitter la présentation',
+                'La présentation est en cours de lecture en boucle. Voulez-vous vraiment quitter ?',
+                [
+                  { text: 'Continuer', style: 'cancel' },
+                  { text: 'Quitter', onPress: () => router.back() }
+                ]
+              );
+            } else {
+              router.back();
+            }
             break;
         }
       });
     } catch (error) {
-      console.log('TVEventHandler not available, using fallback controls:', error);
+      console.log('TVEventHandler setup failed:', error);
     }
-  };
+  }, [isLooping, isPlaying]);
 
-  // Navigation améliorée pour Fire TV
-  const handleNavigateRight = () => {
+  // Navigation Fire TV optimisée
+  const handleNavigateRight = useCallback(() => {
     const maxIndex = getMaxFocusIndex();
     if (focusedControlIndex < maxIndex) {
       setFocusedControlIndex(focusedControlIndex + 1);
     }
-  };
+  }, [focusedControlIndex]);
 
-  const handleNavigateLeft = () => {
+  const handleNavigateLeft = useCallback(() => {
     if (focusedControlIndex > -1) {
       setFocusedControlIndex(focusedControlIndex - 1);
     }
-  };
+  }, [focusedControlIndex]);
 
-  const handleNavigateUp = () => {
-    // Navigation vers les contrôles du haut
+  const handleNavigateUp = useCallback(() => {
     if (focusedControlIndex >= 5) {
-      setFocusedControlIndex(1); // Retour au play/pause
+      setFocusedControlIndex(1);
     }
-  };
+  }, [focusedControlIndex]);
 
-  const handleNavigateDown = () => {
-    // Navigation vers les miniatures
+  const handleNavigateDown = useCallback(() => {
     if (focusedControlIndex < 5 && presentation && presentation.slides.length > 0) {
-      setFocusedControlIndex(5); // Premier slide
+      setFocusedControlIndex(5);
     }
-  };
+  }, [focusedControlIndex, presentation]);
 
-  const getMaxFocusIndex = () => {
-    const baseControls = 4; // -1 (back), 0 (prev), 1 (play), 2 (next), 3 (restart), 4 (loop)
+  const getMaxFocusIndex = useCallback(() => {
+    const baseControls = 4;
     const slidesCount = presentation?.slides.length || 0;
     return baseControls + slidesCount;
-  };
+  }, [presentation]);
 
-  const handleSelectAction = () => {
+  const handleSelectAction = useCallback(() => {
     switch (focusedControlIndex) {
       case -1:
-        router.back();
+        if (isLooping && isPlaying) {
+          Alert.alert(
+            'Quitter la présentation',
+            'La présentation est en cours de lecture en boucle. Voulez-vous vraiment quitter ?',
+            [
+              { text: 'Continuer', style: 'cancel' },
+              { text: 'Quitter', onPress: () => router.back() }
+            ]
+          );
+        } else {
+          router.back();
+        }
         break;
       case 0:
         previousSlide();
@@ -190,7 +266,6 @@ export default function PresentationScreen() {
         toggleLoop();
         break;
       default:
-        // Navigation vers un slide spécifique
         if (focusedControlIndex >= 5 && presentation) {
           const slideIndex = focusedControlIndex - 5;
           if (slideIndex < presentation.slides.length) {
@@ -199,20 +274,22 @@ export default function PresentationScreen() {
         }
         break;
     }
-  };
+  }, [focusedControlIndex, isLooping, isPlaying, presentation]);
 
-  // Démarrer automatiquement si c'est une présentation assignée ou en auto-play
+  // Démarrage automatique optimisé
   useEffect(() => {
     if (presentation && auto_play === 'true') {
       console.log('=== AUTO-STARTING PRESENTATION ===');
-      setTimeout(() => {
+      const startTimer = setTimeout(() => {
         setIsPlaying(true);
         setShowControls(false);
       }, 1000);
+      
+      return () => clearTimeout(startTimer);
     }
   }, [presentation, auto_play]);
 
-  // Gérer le timer de slide avec nettoyage complet
+  // Gestion du timer de slide optimisée avec prévention des fuites mémoire
   useEffect(() => {
     console.log('=== TIMER EFFECT TRIGGERED ===');
     console.log('isPlaying:', isPlaying);
@@ -234,7 +311,7 @@ export default function PresentationScreen() {
     };
   }, [isPlaying, currentSlideIndex, presentation]);
 
-  // Auto-masquage des contrôles amélioré
+  // Auto-masquage des contrôles optimisé
   useEffect(() => {
     if (hideControlsTimeoutRef.current) {
       clearTimeout(hideControlsTimeoutRef.current);
@@ -272,6 +349,8 @@ export default function PresentationScreen() {
       
       if (data.slides.length > 0) {
         setTimeRemaining(data.slides[0].duration * 1000);
+        // Précharger les premières images
+        preloadImages(data.slides.slice(0, 3));
       }
     } catch (error) {
       console.error('Error loading presentation:', error);
@@ -282,15 +361,33 @@ export default function PresentationScreen() {
     }
   };
 
-  const stopSlideTimer = () => {
+  // Préchargement optimisé des images
+  const preloadImages = useCallback((slides: Slide[]) => {
+    if (memoryOptimization) {
+      // En mode optimisation mémoire, ne précharger que l'image suivante
+      return;
+    }
+    
+    slides.forEach((slide, index) => {
+      if (!imagePreloadRef.current[slide.id]) {
+        Image.prefetch(slide.image_url).then(() => {
+          imagePreloadRef.current[slide.id] = true;
+        }).catch(() => {
+          console.warn(`Failed to preload image for slide ${slide.id}`);
+        });
+      }
+    });
+  }, [memoryOptimization]);
+
+  const stopSlideTimer = useCallback(() => {
     if (intervalRef.current) {
       console.log('=== STOPPING SLIDE TIMER ===');
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-  };
+  }, []);
 
-  const startSlideTimer = () => {
+  const startSlideTimer = useCallback(() => {
     if (!presentation || presentation.slides.length === 0) {
       console.log('=== NO PRESENTATION OR SLIDES, NOT STARTING TIMER ===');
       return;
@@ -305,6 +402,7 @@ export default function PresentationScreen() {
     console.log(`Slide duration: ${currentSlide.duration}s (${slideDuration}ms)`);
     
     setTimeRemaining(slideDuration);
+    lastSlideChangeRef.current = Date.now();
 
     intervalRef.current = setInterval(() => {
       setTimeRemaining((prev) => {
@@ -321,40 +419,52 @@ export default function PresentationScreen() {
     }, 100);
 
     console.log('=== TIMER STARTED SUCCESSFULLY ===');
-  };
+  }, [presentation, currentSlideIndex]);
 
-  const togglePlayPause = () => {
+  const togglePlayPause = useCallback(() => {
     console.log('=== TOGGLE PLAY/PAUSE ===');
     console.log('Current state:', isPlaying ? 'PLAYING' : 'PAUSED');
     
     const newPlayingState = !isPlaying;
     setIsPlaying(newPlayingState);
     setShowControls(true);
-  };
+  }, [isPlaying]);
 
-  const toggleLoop = () => {
-    setIsLooping(!isLooping);
+  const toggleLoop = useCallback(() => {
+    const newLoopState = !isLooping;
+    setIsLooping(newLoopState);
     setShowControls(true);
     
     Alert.alert(
       'Mode boucle',
-      isLooping ? 'Mode boucle désactivé' : 'Mode boucle activé - La présentation se répétera automatiquement',
+      newLoopState ? 'Mode boucle activé - La présentation se répétera automatiquement' : 'Mode boucle désactivé',
       [{ text: 'OK' }]
     );
-  };
+  }, [isLooping]);
 
-  const nextSlide = () => {
-    if (!presentation) return;
+  const nextSlide = useCallback(() => {
+    if (!presentation || isTransitioning) return;
     
     console.log(`=== NEXT SLIDE LOGIC ===`);
     console.log(`Current: ${currentSlideIndex + 1}/${presentation.slides.length}`);
     console.log(`Is looping: ${isLooping}`);
     console.log(`Is playing: ${isPlaying}`);
     
+    setIsTransitioning(true);
+    
+    // Précharger l'image suivante si pas en mode optimisation mémoire
+    if (!memoryOptimization && currentSlideIndex < presentation.slides.length - 2) {
+      const nextSlideIndex = currentSlideIndex + 2;
+      if (nextSlideIndex < presentation.slides.length) {
+        preloadImages([presentation.slides[nextSlideIndex]]);
+      }
+    }
+    
     if (currentSlideIndex < presentation.slides.length - 1) {
       const nextIndex = currentSlideIndex + 1;
       console.log(`Moving to slide ${nextIndex + 1}`);
       setCurrentSlideIndex(nextIndex);
+      lastSlideChangeRef.current = Date.now();
     } else {
       console.log('End of presentation reached');
       
@@ -362,6 +472,14 @@ export default function PresentationScreen() {
         console.log(`Loop ${loopCount + 1} completed, restarting...`);
         setCurrentSlideIndex(0);
         setLoopCount(prev => prev + 1);
+        lastSlideChangeRef.current = Date.now();
+        
+        // Nettoyage périodique de la mémoire
+        if (memoryOptimization && loopCount % 5 === 0) {
+          console.log('=== PERFORMING MEMORY CLEANUP ===');
+          setImageLoadError({});
+          imagePreloadRef.current = {};
+        }
       } else {
         console.log('Stopping playback, showing options');
         setIsPlaying(false);
@@ -378,10 +496,12 @@ export default function PresentationScreen() {
             ]
           );
           
-          setTimeout(() => {
+          const restartTimer = setTimeout(() => {
             setIsLooping(true);
             setIsPlaying(true);
           }, 5000);
+          
+          return () => clearTimeout(restartTimer);
         } else {
           Alert.alert(
             'Présentation terminée',
@@ -395,51 +515,75 @@ export default function PresentationScreen() {
         }
       }
     }
-  };
+    
+    // Délai de transition pour éviter les changements trop rapides
+    transitionTimeoutRef.current = setTimeout(() => {
+      setIsTransitioning(false);
+    }, 200);
+  }, [presentation, currentSlideIndex, isLooping, isPlaying, assigned, loopCount, memoryOptimization, isTransitioning]);
 
-  const previousSlide = () => {
-    if (currentSlideIndex > 0) {
+  const previousSlide = useCallback(() => {
+    if (currentSlideIndex > 0 && !isTransitioning) {
       console.log(`Moving to previous slide: ${currentSlideIndex}`);
+      setIsTransitioning(true);
       setCurrentSlideIndex(currentSlideIndex - 1);
+      lastSlideChangeRef.current = Date.now();
+      
+      transitionTimeoutRef.current = setTimeout(() => {
+        setIsTransitioning(false);
+      }, 200);
     }
     setShowControls(true);
-  };
+  }, [currentSlideIndex, isTransitioning]);
 
-  const goToSlide = (index: number) => {
-    console.log(`Jumping to slide ${index + 1}`);
-    setCurrentSlideIndex(index);
-    setShowControls(true);
-  };
+  const goToSlide = useCallback((index: number) => {
+    if (index >= 0 && index < (presentation?.slides.length || 0) && !isTransitioning) {
+      console.log(`Jumping to slide ${index + 1}`);
+      setIsTransitioning(true);
+      setCurrentSlideIndex(index);
+      lastSlideChangeRef.current = Date.now();
+      setShowControls(true);
+      
+      transitionTimeoutRef.current = setTimeout(() => {
+        setIsTransitioning(false);
+      }, 200);
+    }
+  }, [presentation, isTransitioning]);
 
-  const restartPresentation = () => {
+  const restartPresentation = useCallback(() => {
     console.log('=== RESTARTING PRESENTATION ===');
     setCurrentSlideIndex(0);
     setLoopCount(0);
     setIsPlaying(true);
     setShowControls(true);
-  };
+    setMemoryOptimization(false);
+    setImageLoadError({});
+    imagePreloadRef.current = {};
+    lastSlideChangeRef.current = Date.now();
+  }, []);
 
-  const toggleControls = () => {
+  const toggleControls = useCallback(() => {
     console.log('=== TOGGLE CONTROLS ===');
     console.log('Current showControls:', showControls);
     setShowControls(!showControls);
-  };
+  }, [showControls]);
 
-  const formatTime = (milliseconds: number) => {
+  const formatTime = useCallback((milliseconds: number) => {
     const seconds = Math.ceil(milliseconds / 1000);
     return `${seconds}s`;
-  };
+  }, []);
 
-  const handleImageError = (slideId: number) => {
+  const handleImageError = useCallback((slideId: number) => {
     console.error('Image load error for slide:', slideId);
     setImageLoadError(prev => ({ ...prev, [slideId]: true }));
-  };
+  }, []);
 
-  const retryLoadPresentation = () => {
+  const retryLoadPresentation = useCallback(() => {
     setError(null);
     setImageLoadError({});
+    imagePreloadRef.current = {};
     loadPresentation();
-  };
+  }, []);
 
   if (loading) {
     return (
@@ -451,6 +595,9 @@ export default function PresentationScreen() {
         )}
         {auto_play === 'true' && (
           <Text style={styles.autoPlayText}>Lecture automatique activée</Text>
+        )}
+        {memoryOptimization && (
+          <Text style={styles.optimizationText}>Mode optimisation mémoire</Text>
         )}
       </View>
     );
@@ -588,6 +735,13 @@ export default function PresentationScreen() {
             <Text style={styles.autoPlayText}>AUTO</Text>
           </View>
         )}
+
+        {memoryOptimization && (
+          <View style={styles.optimizationIndicator}>
+            <RefreshCw size={16} color="#ffffff" />
+            <Text style={styles.optimizationText}>OPTIMISÉ</Text>
+          </View>
+        )}
       </TouchableOpacity>
 
       {showControls && (
@@ -602,7 +756,20 @@ export default function PresentationScreen() {
                   styles.backIconButton,
                   focusedControlIndex === -1 && styles.focusedControl
                 ]}
-                onPress={() => router.back()}
+                onPress={() => {
+                  if (isLooping && isPlaying) {
+                    Alert.alert(
+                      'Quitter la présentation',
+                      'La présentation est en cours de lecture en boucle. Voulez-vous vraiment quitter ?',
+                      [
+                        { text: 'Continuer', style: 'cancel' },
+                        { text: 'Quitter', onPress: () => router.back() }
+                      ]
+                    );
+                  } else {
+                    router.back();
+                  }
+                }}
                 accessible={true}
                 accessibilityLabel="Retour à la liste des présentations"
                 accessibilityRole="button"
@@ -615,6 +782,7 @@ export default function PresentationScreen() {
                 <Text style={styles.presentationTitle} numberOfLines={1}>
                   {presentation.name}
                   {assigned === 'true' && ' (Assignée)'}
+                  {memoryOptimization && ' (Optimisé)'}
                 </Text>
                 <Text style={styles.slideCounter}>
                   {currentSlideIndex + 1} / {presentation.slides.length}
@@ -639,7 +807,7 @@ export default function PresentationScreen() {
                     focusedControlIndex === 0 && styles.focusedControl
                   ]}
                   onPress={previousSlide}
-                  disabled={currentSlideIndex === 0}
+                  disabled={currentSlideIndex === 0 || isTransitioning}
                   accessible={true}
                   accessibilityLabel="Slide précédente"
                   accessibilityRole="button"
@@ -674,7 +842,7 @@ export default function PresentationScreen() {
                     focusedControlIndex === 2 && styles.focusedControl
                   ]}
                   onPress={nextSlide}
-                  disabled={currentSlideIndex === presentation.slides.length - 1 && !isLooping}
+                  disabled={(currentSlideIndex === presentation.slides.length - 1 && !isLooping) || isTransitioning}
                   accessible={true}
                   accessibilityLabel="Slide suivante"
                   accessibilityRole="button"
@@ -727,6 +895,7 @@ export default function PresentationScreen() {
                       focusedControlIndex === 5 + index && styles.focusedThumbnail,
                     ]}
                     onPress={() => goToSlide(index)}
+                    disabled={isTransitioning}
                     accessible={true}
                     accessibilityLabel={`Aller à la slide ${index + 1}`}
                     accessibilityRole="button"
@@ -770,6 +939,12 @@ const styles = StyleSheet.create({
   },
   autoPlayText: {
     color: '#10b981',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
+  optimizationText: {
+    color: '#8b5cf6',
     fontSize: 12,
     fontWeight: 'bold',
     marginTop: 4,
@@ -928,6 +1103,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  optimizationIndicator: {
+    position: 'absolute',
+    top: 120,
+    left: 20,
+    backgroundColor: 'rgba(139, 92, 246, 0.9)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   controlsOverlay: {
     position: 'absolute',
     top: 0,
@@ -1057,7 +1244,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
-  // CORRECTION: Styles pour les indicateurs de focus Fire TV améliorés
   focusedControl: {
     borderWidth: 4,
     borderColor: '#3b82f6',
