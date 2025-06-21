@@ -42,17 +42,16 @@ export default function PresentationScreen() {
   const [imageLoadError, setImageLoadError] = useState<{[key: number]: boolean}>({});
   const [loopCount, setLoopCount] = useState(0);
   const [focusedControlIndex, setFocusedControlIndex] = useState(1);
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const [memoryOptimization, setMemoryOptimization] = useState(false);
   
   // Refs pour la gestion des timers et événements
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const hideControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const tvEventHandlerRef = useRef<any>(null);
-  const transitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const imagePreloadRef = useRef<{[key: number]: boolean}>({});
   const lastSlideChangeRef = useRef<number>(0);
   const performanceMonitorRef = useRef<NodeJS.Timeout | null>(null);
+  const slideChangeInProgressRef = useRef<boolean>(false);
 
   // Nettoyage complet des ressources
   const cleanupResources = useCallback(() => {
@@ -67,11 +66,6 @@ export default function PresentationScreen() {
     if (hideControlsTimeoutRef.current) {
       clearTimeout(hideControlsTimeoutRef.current);
       hideControlsTimeoutRef.current = null;
-    }
-    
-    if (transitionTimeoutRef.current) {
-      clearTimeout(transitionTimeoutRef.current);
-      transitionTimeoutRef.current = null;
     }
     
     if (performanceMonitorRef.current) {
@@ -92,6 +86,7 @@ export default function PresentationScreen() {
     // Nettoyer les erreurs d'images
     setImageLoadError({});
     imagePreloadRef.current = {};
+    slideChangeInProgressRef.current = false;
   }, []);
 
   // Monitoring des performances pour détecter les fuites mémoire
@@ -443,14 +438,13 @@ export default function PresentationScreen() {
   }, [isLooping]);
 
   const nextSlide = useCallback(() => {
-    if (!presentation || isTransitioning) return;
+    if (!presentation) return;
     
+    // CORRECTION: Supprimer la vérification de transition qui bloquait la boucle
     console.log(`=== NEXT SLIDE LOGIC ===`);
     console.log(`Current: ${currentSlideIndex + 1}/${presentation.slides.length}`);
     console.log(`Is looping: ${isLooping}`);
     console.log(`Is playing: ${isPlaying}`);
-    
-    setIsTransitioning(true);
     
     // Précharger l'image suivante si pas en mode optimisation mémoire
     if (!memoryOptimization && currentSlideIndex < presentation.slides.length - 2) {
@@ -515,40 +509,25 @@ export default function PresentationScreen() {
         }
       }
     }
-    
-    // Délai de transition pour éviter les changements trop rapides
-    transitionTimeoutRef.current = setTimeout(() => {
-      setIsTransitioning(false);
-    }, 200);
-  }, [presentation, currentSlideIndex, isLooping, isPlaying, assigned, loopCount, memoryOptimization, isTransitioning]);
+  }, [presentation, currentSlideIndex, isLooping, isPlaying, assigned, loopCount, memoryOptimization]);
 
   const previousSlide = useCallback(() => {
-    if (currentSlideIndex > 0 && !isTransitioning) {
+    if (currentSlideIndex > 0) {
       console.log(`Moving to previous slide: ${currentSlideIndex}`);
-      setIsTransitioning(true);
       setCurrentSlideIndex(currentSlideIndex - 1);
       lastSlideChangeRef.current = Date.now();
-      
-      transitionTimeoutRef.current = setTimeout(() => {
-        setIsTransitioning(false);
-      }, 200);
     }
     setShowControls(true);
-  }, [currentSlideIndex, isTransitioning]);
+  }, [currentSlideIndex]);
 
   const goToSlide = useCallback((index: number) => {
-    if (index >= 0 && index < (presentation?.slides.length || 0) && !isTransitioning) {
+    if (index >= 0 && index < (presentation?.slides.length || 0)) {
       console.log(`Jumping to slide ${index + 1}`);
-      setIsTransitioning(true);
       setCurrentSlideIndex(index);
       lastSlideChangeRef.current = Date.now();
       setShowControls(true);
-      
-      transitionTimeoutRef.current = setTimeout(() => {
-        setIsTransitioning(false);
-      }, 200);
     }
-  }, [presentation, isTransitioning]);
+  }, [presentation]);
 
   const restartPresentation = useCallback(() => {
     console.log('=== RESTARTING PRESENTATION ===');
@@ -560,6 +539,7 @@ export default function PresentationScreen() {
     setImageLoadError({});
     imagePreloadRef.current = {};
     lastSlideChangeRef.current = Date.now();
+    slideChangeInProgressRef.current = false;
   }, []);
 
   const toggleControls = useCallback(() => {
@@ -807,7 +787,7 @@ export default function PresentationScreen() {
                     focusedControlIndex === 0 && styles.focusedControl
                   ]}
                   onPress={previousSlide}
-                  disabled={currentSlideIndex === 0 || isTransitioning}
+                  disabled={currentSlideIndex === 0}
                   accessible={true}
                   accessibilityLabel="Slide précédente"
                   accessibilityRole="button"
@@ -842,7 +822,7 @@ export default function PresentationScreen() {
                     focusedControlIndex === 2 && styles.focusedControl
                   ]}
                   onPress={nextSlide}
-                  disabled={(currentSlideIndex === presentation.slides.length - 1 && !isLooping) || isTransitioning}
+                  disabled={currentSlideIndex === presentation.slides.length - 1 && !isLooping}
                   accessible={true}
                   accessibilityLabel="Slide suivante"
                   accessibilityRole="button"
@@ -895,7 +875,6 @@ export default function PresentationScreen() {
                       focusedControlIndex === 5 + index && styles.focusedThumbnail,
                     ]}
                     onPress={() => goToSlide(index)}
-                    disabled={isTransitioning}
                     accessible={true}
                     accessibilityLabel={`Aller à la slide ${index + 1}`}
                     accessibilityRole="button"
