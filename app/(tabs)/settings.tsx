@@ -9,10 +9,12 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Server, Wifi, WifiOff, Check, CircleAlert as AlertCircle, Monitor, Settings as SettingsIcon, RefreshCw, Trash2, UserPlus } from 'lucide-react-native';
+import { Server, Wifi, WifiOff, Check, CircleAlert as AlertCircle, Monitor, Settings as SettingsIcon, RefreshCw, Trash2, UserPlus, Activity, Zap } from 'lucide-react-native';
 import { apiService } from '@/services/ApiService';
+import { statusService } from '@/services/StatusService';
 
 // Import conditionnel de TVEventHandler
 let TVEventHandler: any = null;
@@ -34,10 +36,19 @@ export default function SettingsScreen() {
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [tvEventHandler, setTvEventHandler] = useState<any>(null);
+  
+  // Nouveaux états pour les paramètres avancés
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [remoteControlEnabled, setRemoteControlEnabled] = useState(true);
+  const [statusReportingEnabled, setStatusReportingEnabled] = useState(true);
+  const [autoRestartEnabled, setAutoRestartEnabled] = useState(true);
+  const [memoryOptimizationEnabled, setMemoryOptimizationEnabled] = useState(true);
+  const [deviceStatus, setDeviceStatus] = useState<string>('online');
 
   useEffect(() => {
     loadCurrentSettings();
     loadDebugInfo();
+    loadAdvancedSettings();
     
     // Configuration Fire TV seulement sur les plateformes supportées
     if (Platform.OS === 'android' && TVEventHandler) {
@@ -95,7 +106,7 @@ export default function SettingsScreen() {
   };
 
   const handleNavigateDown = () => {
-    const maxIndex = 6; // 0: input, 1: test, 2: save, 3: register, 4: refresh, 5: reset device, 6: reset settings
+    const maxIndex = 10; // Ajusté pour inclure les nouveaux paramètres
     if (focusedIndex < maxIndex) {
       setFocusedIndex(focusedIndex + 1);
     }
@@ -132,6 +143,18 @@ export default function SettingsScreen() {
       case 6:
         resetSettings();
         break;
+      case 7:
+        setShowAdvancedSettings(!showAdvancedSettings);
+        break;
+      case 8:
+        setRemoteControlEnabled(!remoteControlEnabled);
+        break;
+      case 9:
+        setStatusReportingEnabled(!statusReportingEnabled);
+        break;
+      case 10:
+        setMemoryOptimizationEnabled(!memoryOptimizationEnabled);
+        break;
     }
   };
 
@@ -145,8 +168,53 @@ export default function SettingsScreen() {
     try {
       const info = await apiService.getDebugInfo();
       setDebugInfo(info);
+      
+      // Récupérer le statut actuel
+      const status = statusService.getCurrentStatusSync();
+      if (status) {
+        setDeviceStatus(status.status);
+      }
     } catch (error) {
       console.error('Error loading debug info:', error);
+    }
+  };
+
+  const loadAdvancedSettings = async () => {
+    try {
+      // Charger les paramètres avancés depuis AsyncStorage
+      const remoteControl = await AsyncStorage.getItem('settings_remote_control');
+      const statusReporting = await AsyncStorage.getItem('settings_status_reporting');
+      const autoRestart = await AsyncStorage.getItem('settings_auto_restart');
+      const memoryOptimization = await AsyncStorage.getItem('settings_memory_optimization');
+      
+      setRemoteControlEnabled(remoteControl !== 'false');
+      setStatusReportingEnabled(statusReporting !== 'false');
+      setAutoRestartEnabled(autoRestart !== 'false');
+      setMemoryOptimizationEnabled(memoryOptimization !== 'false');
+    } catch (error) {
+      console.error('Error loading advanced settings:', error);
+    }
+  };
+
+  const saveAdvancedSettings = async () => {
+    try {
+      await AsyncStorage.setItem('settings_remote_control', remoteControlEnabled.toString());
+      await AsyncStorage.setItem('settings_status_reporting', statusReportingEnabled.toString());
+      await AsyncStorage.setItem('settings_auto_restart', autoRestartEnabled.toString());
+      await AsyncStorage.setItem('settings_memory_optimization', memoryOptimizationEnabled.toString());
+      
+      Alert.alert(
+        'Paramètres avancés sauvegardés',
+        'Les paramètres avancés ont été sauvegardés avec succès.',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Error saving advanced settings:', error);
+      Alert.alert(
+        'Erreur',
+        'Impossible de sauvegarder les paramètres avancés.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
@@ -405,6 +473,28 @@ export default function SettingsScreen() {
     );
   };
 
+  const renderDeviceStatus = () => {
+    const statusConfig: {[key: string]: {color: string, text: string, icon: any}} = {
+      online: { color: '#10b981', text: 'En ligne', icon: Activity },
+      offline: { color: '#6b7280', text: 'Hors ligne', icon: WifiOff },
+      playing: { color: '#3b82f6', text: 'En diffusion', icon: Play },
+      paused: { color: '#f59e0b', text: 'En pause', icon: Pause },
+      error: { color: '#ef4444', text: 'Erreur', icon: AlertCircle },
+    };
+
+    const config = statusConfig[deviceStatus] || statusConfig.offline;
+    const IconComponent = config.icon;
+
+    return (
+      <View style={[styles.deviceStatusContainer, { borderColor: config.color }]}>
+        <IconComponent size={20} color={config.color} />
+        <Text style={[styles.statusText, { color: config.color }]}>
+          {config.text}
+        </Text>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -416,7 +506,7 @@ export default function SettingsScreen() {
             <SettingsIcon size={32} color="#ffffff" />
           </LinearGradient>
           <Text style={styles.title}>Paramètres Enhanced</Text>
-          <Text style={styles.subtitle}>Configuration du serveur de présentations</Text>
+          <Text style={styles.subtitle}>Configuration du serveur et contrôle à distance</Text>
         </View>
 
         <View style={styles.section}>
@@ -534,7 +624,26 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Informations de l'appareil</Text>
+          <Text style={styles.sectionTitle}>Statut de l'appareil</Text>
+          
+          <View style={styles.statusRow}>
+            {renderDeviceStatus()}
+            
+            <TouchableOpacity
+              style={[
+                styles.refreshStatusButton,
+                focusedIndex === 4 && styles.focusedButton
+              ]}
+              onPress={loadDebugInfo}
+              accessible={true}
+              accessibilityLabel="Actualiser le statut"
+              accessibilityRole="button"
+              onFocus={() => setFocusedIndex(4)}
+            >
+              <RefreshCw size={16} color="#ffffff" />
+              <Text style={styles.refreshStatusText}>Actualiser</Text>
+            </TouchableOpacity>
+          </View>
           
           <View style={styles.infoCard}>
             <View style={styles.infoRow}>
@@ -594,6 +703,16 @@ export default function SettingsScreen() {
                     </Text>
                   </View>
                 </View>
+                
+                <View style={styles.infoRow}>
+                  <Zap size={20} color={remoteControlEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Contrôle à distance</Text>
+                    <Text style={styles.infoValue}>
+                      {remoteControlEnabled ? 'Activé' : 'Désactivé'}
+                    </Text>
+                  </View>
+                </View>
               </>
             )}
           </View>
@@ -602,24 +721,6 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Actions</Text>
           
-          <TouchableOpacity
-            style={[
-              styles.button, 
-              styles.actionButton,
-              focusedIndex === 4 && styles.focusedButton
-            ]}
-            onPress={() => loadDebugInfo()}
-            accessible={true}
-            accessibilityLabel="Actualiser les informations"
-            accessibilityRole="button"
-            onFocus={() => setFocusedIndex(4)}
-          >
-            <RefreshCw size={16} color="#3b82f6" />
-            <Text style={[styles.buttonText, { color: '#3b82f6' }]}>
-              Actualiser les informations
-            </Text>
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={[
               styles.button, 
@@ -657,6 +758,109 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={[
+              styles.advancedSettingsHeader,
+              focusedIndex === 7 && styles.focusedButton
+            ]}
+            onPress={() => setShowAdvancedSettings(!showAdvancedSettings)}
+            accessible={true}
+            accessibilityLabel="Paramètres avancés"
+            accessibilityRole="button"
+            onFocus={() => setFocusedIndex(7)}
+          >
+            <Text style={styles.sectionTitle}>Paramètres avancés</Text>
+            <Text style={styles.chevron}>{showAdvancedSettings ? '▼' : '▶'}</Text>
+          </TouchableOpacity>
+          
+          {showAdvancedSettings && (
+            <View style={styles.advancedSettingsContainer}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingLabelContainer}>
+                  <Zap size={20} color={remoteControlEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.settingTextContainer}>
+                    <Text style={styles.settingLabel}>Contrôle à distance</Text>
+                    <Text style={styles.settingDescription}>
+                      Permet de contrôler l'appareil depuis la plateforme web
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={remoteControlEnabled}
+                  onValueChange={setRemoteControlEnabled}
+                  trackColor={{ false: '#6b7280', true: '#10b981' }}
+                  thumbColor={remoteControlEnabled ? '#ffffff' : '#f4f3f4'}
+                  ios_backgroundColor="#6b7280"
+                  style={[
+                    styles.settingSwitch,
+                    focusedIndex === 8 && styles.focusedSwitch
+                  ]}
+                  onFocus={() => setFocusedIndex(8)}
+                />
+              </View>
+              
+              <View style={styles.settingRow}>
+                <View style={styles.settingLabelContainer}>
+                  <Activity size={20} color={statusReportingEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.settingTextContainer}>
+                    <Text style={styles.settingLabel}>Rapport de statut</Text>
+                    <Text style={styles.settingDescription}>
+                      Envoie périodiquement le statut de l'appareil au serveur
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={statusReportingEnabled}
+                  onValueChange={setStatusReportingEnabled}
+                  trackColor={{ false: '#6b7280', true: '#10b981' }}
+                  thumbColor={statusReportingEnabled ? '#ffffff' : '#f4f3f4'}
+                  ios_backgroundColor="#6b7280"
+                  style={[
+                    styles.settingSwitch,
+                    focusedIndex === 9 && styles.focusedSwitch
+                  ]}
+                  onFocus={() => setFocusedIndex(9)}
+                />
+              </View>
+              
+              <View style={styles.settingRow}>
+                <View style={styles.settingLabelContainer}>
+                  <RefreshCw size={20} color={memoryOptimizationEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.settingTextContainer}>
+                    <Text style={styles.settingLabel}>Optimisation mémoire</Text>
+                    <Text style={styles.settingDescription}>
+                      Optimise l'utilisation de la mémoire pour les longues présentations
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={memoryOptimizationEnabled}
+                  onValueChange={setMemoryOptimizationEnabled}
+                  trackColor={{ false: '#6b7280', true: '#10b981' }}
+                  thumbColor={memoryOptimizationEnabled ? '#ffffff' : '#f4f3f4'}
+                  ios_backgroundColor="#6b7280"
+                  style={[
+                    styles.settingSwitch,
+                    focusedIndex === 10 && styles.focusedSwitch
+                  ]}
+                  onFocus={() => setFocusedIndex(10)}
+                />
+              </View>
+              
+              <TouchableOpacity
+                style={styles.saveAdvancedButton}
+                onPress={saveAdvancedSettings}
+              >
+                <Check size={16} color="#ffffff" />
+                <Text style={styles.saveAdvancedButtonText}>
+                  Sauvegarder les paramètres avancés
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         <View style={styles.helpSection}>
           <Text style={styles.helpTitle}>Guide de configuration Enhanced</Text>
           <Text style={styles.helpText}>
@@ -679,7 +883,12 @@ export default function SettingsScreen() {
             • Par défaut: Présentation par défaut de l'appareil{`\n`}
             • Les deux surveillances fonctionnent en parallèle{`\n\n`}
             
-            <Text style={styles.helpBold}>5. En cas de problème :</Text>{`\n`}
+            <Text style={styles.helpBold}>5. Contrôle à distance :</Text>{`\n`}
+            • Permet de contrôler l'appareil depuis la plateforme web{`\n`}
+            • Statut en temps réel visible sur le serveur{`\n`}
+            • Commandes: lecture, pause, redémarrage, etc.{`\n\n`}
+            
+            <Text style={styles.helpBold}>6. En cas de problème :</Text>{`\n`}
             • Vérifiez que l'appareil et le serveur sont sur le même réseau{`\n`}
             • Testez l'URL dans un navigateur web{`\n`}
             • Utilisez le bouton d'enregistrement manuel{`\n`}
@@ -757,7 +966,6 @@ const styles = StyleSheet.create({
     borderColor: '#374151',
     marginBottom: 8,
   },
-  // Style pour l'input focalisé avec bordure très visible
   focusedInput: {
     borderColor: '#3b82f6',
     borderWidth: 4,
@@ -782,6 +990,36 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  deviceStatusContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+  },
+  refreshStatusButton: {
+    backgroundColor: '#3b82f6',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  refreshStatusText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   statusText: {
     fontSize: 14,
@@ -828,7 +1066,6 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.5,
   },
-  // Style pour les boutons focalisés avec bordure très visible
   focusedButton: {
     borderWidth: 4,
     borderColor: '#3b82f6',
@@ -874,6 +1111,71 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#ffffff',
+  },
+  advancedSettingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  chevron: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  advancedSettingsContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  settingLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  settingTextContainer: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  settingLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  settingDescription: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  settingSwitch: {
+    marginLeft: 8,
+  },
+  focusedSwitch: {
+    transform: [{ scale: 1.1 }],
+  },
+  saveAdvancedButton: {
+    backgroundColor: '#10b981',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  saveAdvancedButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   helpSection: {
     backgroundColor: '#1a1a1a',

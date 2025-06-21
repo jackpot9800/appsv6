@@ -12,8 +12,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Monitor, Wifi, WifiOff, RefreshCw, Play, Settings, Repeat, Star } from 'lucide-react-native';
+import { Monitor, Wifi, WifiOff, RefreshCw, Play, Settings, Repeat, Star, Activity, Zap } from 'lucide-react-native';
 import { apiService, Presentation, AssignedPresentation, DefaultPresentation } from '@/services/ApiService';
+import { statusService, RemoteCommand } from '@/services/StatusService';
 
 const { width } = Dimensions.get('window');
 
@@ -29,9 +30,20 @@ export default function HomeScreen() {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showDefaultPresentationPrompt, setShowDefaultPresentationPrompt] = useState(false);
   const [autoLaunchDefaultTimer, setAutoLaunchDefaultTimer] = useState<NodeJS.Timeout | null>(null);
+  
+  // Nouveaux états pour le statut temps réel
+  const [deviceStatus, setDeviceStatus] = useState<'online' | 'offline' | 'playing' | 'paused' | 'error'>('offline');
+  const [currentPresentationInfo, setCurrentPresentationInfo] = useState<{
+    id?: number;
+    name?: string;
+    slideIndex?: number;
+    totalSlides?: number;
+    isLooping?: boolean;
+  }>({});
 
   useEffect(() => {
     initializeApp();
+    initializeStatusService();
   }, []);
 
   // Nettoyage du timer au démontage du composant
@@ -40,6 +52,7 @@ export default function HomeScreen() {
       if (autoLaunchDefaultTimer) {
         clearTimeout(autoLaunchDefaultTimer);
       }
+      statusService.stop();
     };
   }, [autoLaunchDefaultTimer]);
 
@@ -80,6 +93,97 @@ export default function HomeScreen() {
     setLoading(false);
   };
 
+  const initializeStatusService = async () => {
+    try {
+      await statusService.initialize();
+      
+      // Configurer les callbacks pour le service de statut
+      statusService.setOnStatusUpdate((status) => {
+        setDeviceStatus(status.status);
+        setCurrentPresentationInfo({
+          id: status.current_presentation_id,
+          name: status.current_presentation_name,
+          slideIndex: status.current_slide_index,
+          totalSlides: status.total_slides,
+          isLooping: status.is_looping,
+        });
+      });
+
+      statusService.setOnRemoteCommand((command) => {
+        handleRemoteCommand(command);
+      });
+
+      // Mettre à jour le statut initial
+      statusService.updateStatus({ status: 'online' });
+      
+    } catch (error) {
+      console.error('Failed to initialize status service:', error);
+    }
+  };
+
+  const handleRemoteCommand = (command: RemoteCommand) => {
+    console.log('=== HANDLING REMOTE COMMAND ===', command);
+    
+    switch (command.command) {
+      case 'play':
+        // Reprendre la lecture si une présentation est en cours
+        if (currentPresentationInfo.id) {
+          router.push(`/presentation/${currentPresentationInfo.id}?auto_play=true&loop_mode=${currentPresentationInfo.isLooping}&remote_command=play`);
+        }
+        break;
+        
+      case 'pause':
+        // Mettre en pause (sera géré par l'écran de présentation)
+        statusService.updatePlaybackStatus('paused');
+        break;
+        
+      case 'stop':
+        // Arrêter et revenir à l'accueil
+        router.push('/(tabs)/');
+        statusService.updatePlaybackStatus('stopped');
+        break;
+        
+      case 'restart':
+        // Redémarrer la présentation courante
+        if (currentPresentationInfo.id) {
+          router.push(`/presentation/${currentPresentationInfo.id}?auto_play=true&loop_mode=true&restart=true`);
+        }
+        break;
+        
+      case 'assign_presentation':
+        // Assigner et lancer une nouvelle présentation
+        if (command.parameters?.presentation_id) {
+          const autoPlay = command.parameters.auto_play ?? true;
+          const loopMode = command.parameters.loop_mode ?? true;
+          router.push(`/presentation/${command.parameters.presentation_id}?auto_play=${autoPlay}&loop_mode=${loopMode}&assigned=true`);
+        }
+        break;
+        
+      case 'reboot':
+        // Simuler un redémarrage de l'application
+        Alert.alert(
+          'Redémarrage demandé',
+          'L\'application va redémarrer...',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                statusService.updateStatus({ status: 'offline' });
+                // En production, cela pourrait redémarrer l'app
+                setTimeout(() => {
+                  statusService.updateStatus({ status: 'online' });
+                }, 3000);
+              }
+            }
+          ]
+        );
+        break;
+        
+      default:
+        console.warn('Unknown remote command:', command.command);
+    }
+  };
+
   const checkConnection = async () => {
     const serverUrl = apiService.getServerUrl();
     if (!serverUrl) {
@@ -113,7 +217,6 @@ export default function HomeScreen() {
       setPresentations(data);
     } catch (error) {
       console.error('Error loading presentations:', error);
-      // Afficher l'erreur à l'utilisateur
       Alert.alert(
         'Erreur de connexion',
         `Impossible de charger les présentations:\n\n${error instanceof Error ? error.message : 'Erreur inconnue'}`,
@@ -144,7 +247,7 @@ export default function HomeScreen() {
         
         setAssignedPresentation(assigned);
         
-        // CORRECTION: Lancement automatique IMMÉDIAT pour les présentations assignées
+        // Lancement automatique IMMÉDIAT pour les présentations assignées
         console.log('=== AUTO-LAUNCHING ASSIGNED PRESENTATION IMMEDIATELY ===');
         
         // Annuler le timer de présentation par défaut si actif
@@ -156,10 +259,20 @@ export default function HomeScreen() {
         // Masquer la notification de présentation par défaut
         setShowDefaultPresentationPrompt(false);
         
+        // Mettre à jour le statut
+        statusService.updatePresentationStatus(
+          assigned.presentation_id,
+          assigned.presentation_name,
+          0,
+          0, // Will be updated when presentation loads
+          assigned.loop_mode,
+          assigned.auto_play
+        );
+        
         // Lancer immédiatement la présentation assignée en mode boucle
         setTimeout(() => {
           launchAssignedPresentation(assigned);
-        }, 1000); // Délai minimal pour permettre l'affichage de l'interface
+        }, 1000);
       });
 
       console.log('=== CHECKING FOR EXISTING ASSIGNMENT ===');
@@ -168,7 +281,7 @@ export default function HomeScreen() {
         console.log('=== FOUND EXISTING ASSIGNMENT ===', existing);
         setAssignedPresentation(existing);
         
-        // CORRECTION: Lancement automatique immédiat pour les assignations existantes
+        // Lancement automatique immédiat pour les assignations existantes
         console.log('=== AUTO-LAUNCHING EXISTING ASSIGNED PRESENTATION ===');
         
         // Annuler le timer de présentation par défaut si actif
@@ -180,10 +293,20 @@ export default function HomeScreen() {
         // Masquer la notification de présentation par défaut
         setShowDefaultPresentationPrompt(false);
         
+        // Mettre à jour le statut
+        statusService.updatePresentationStatus(
+          existing.presentation_id,
+          existing.presentation_name,
+          0,
+          0,
+          existing.loop_mode,
+          existing.auto_play
+        );
+        
         // Lancer immédiatement
         setTimeout(() => {
           launchAssignedPresentation(existing);
-        }, 2000); // Délai légèrement plus long pour l'assignation existante
+        }, 2000);
       }
     } catch (error) {
       console.log('=== ASSIGNMENT MONITORING FAILED ===');
@@ -284,10 +407,10 @@ export default function HomeScreen() {
     
     apiService.markAssignedPresentationAsViewed(assigned.presentation_id);
     
-    // CORRECTION: Forcer auto_play et loop_mode à true pour les présentations assignées
+    // Forcer auto_play et loop_mode à true pour les présentations assignées
     const params = new URLSearchParams({
-      auto_play: 'true', // Toujours true pour les assignations
-      loop_mode: 'true', // Toujours true pour les assignations
+      auto_play: 'true',
+      loop_mode: 'true',
       assigned: 'true'
     });
     
@@ -370,6 +493,16 @@ export default function HomeScreen() {
       setAutoLaunchDefaultTimer(null);
     }
     
+    // Mettre à jour le statut
+    statusService.updatePresentationStatus(
+      presentation.id,
+      presentation.name || presentation.nom || 'Présentation',
+      0,
+      presentation.slide_count,
+      true, // loop mode
+      true  // auto play
+    );
+    
     // Lancer automatiquement en mode boucle
     const params = new URLSearchParams({
       auto_play: 'true',
@@ -437,6 +570,49 @@ export default function HomeScreen() {
           </Text>
         )}
       </TouchableOpacity>
+    );
+  };
+
+  const renderDeviceStatus = () => {
+    const statusConfig = {
+      online: { color: '#10b981', text: 'En ligne', icon: Activity },
+      offline: { color: '#6b7280', text: 'Hors ligne', icon: WifiOff },
+      playing: { color: '#3b82f6', text: 'En diffusion', icon: Play },
+      paused: { color: '#f59e0b', text: 'En pause', icon: Pause },
+      error: { color: '#ef4444', text: 'Erreur', icon: AlertCircle },
+    };
+
+    const config = statusConfig[deviceStatus];
+    const IconComponent = config.icon;
+
+    return (
+      <View style={[styles.deviceStatusCard, { borderLeftColor: config.color }]}>
+        <View style={styles.statusHeader}>
+          <IconComponent size={20} color={config.color} />
+          <Text style={[styles.statusText, { color: config.color }]}>
+            Statut appareil: {config.text}
+          </Text>
+          <Zap size={16} color="#9ca3af" />
+        </View>
+        
+        {currentPresentationInfo.name && (
+          <View style={styles.currentPresentationInfo}>
+            <Text style={styles.currentPresentationName}>
+              📺 {currentPresentationInfo.name}
+            </Text>
+            {currentPresentationInfo.slideIndex !== undefined && currentPresentationInfo.totalSlides && (
+              <Text style={styles.currentSlideInfo}>
+                Slide {currentPresentationInfo.slideIndex + 1} / {currentPresentationInfo.totalSlides}
+                {currentPresentationInfo.isLooping && ' • Mode boucle'}
+              </Text>
+            )}
+          </View>
+        )}
+        
+        <Text style={styles.deviceId}>
+          ID: {apiService.getDeviceId()}
+        </Text>
+      </View>
     );
   };
 
@@ -696,7 +872,7 @@ export default function HomeScreen() {
             <View style={styles.headerContent}>
               <Text style={styles.title}>Kiosque de Présentations</Text>
               <Text style={styles.subtitle}>
-                Fire TV Stick - Serveur Enhanced
+                Fire TV Stick - Contrôle à distance activé
               </Text>
               
               <View style={styles.headerButtons}>
@@ -728,6 +904,7 @@ export default function HomeScreen() {
         </LinearGradient>
 
         {renderConnectionStatus()}
+        {renderDeviceStatus()}
         {renderAssignedPresentation()}
         {renderDefaultPresentation()}
 
@@ -737,7 +914,7 @@ export default function HomeScreen() {
               Présentations disponibles ({presentations.length})
             </Text>
             <Text style={styles.sectionSubtitle}>
-              🔄 Lecture automatique en boucle activée
+              🔄 Lecture automatique en boucle activée • 📡 Contrôle à distance
             </Text>
           </View>
           
@@ -826,14 +1003,17 @@ export default function HomeScreen() {
             style={styles.infoCard}
           >
             <Monitor size={32} color="#ffffff" />
-            <Text style={styles.infoTitle}>Application Enhanced</Text>
+            <Text style={styles.infoTitle}>Application Enhanced avec Contrôle à Distance</Text>
             <Text style={styles.infoText}>
               Cette application se connecte à votre serveur de présentations.
               {'\n'}Serveur: {apiService.getServerUrl() || 'Non configuré'}
               {'\n'}Device ID: {apiService.getDeviceId()}
+              {'\n'}Statut: {deviceStatus}
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
+              {'\n'}Contrôle à distance: Activé
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
+              {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>
           </LinearGradient>
         </View>
@@ -906,7 +1086,6 @@ const styles = StyleSheet.create({
     gap: 12,
     marginTop: 8,
   },
-  // Styles pour le bouton de rafraîchissement
   refreshButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 25,
@@ -933,7 +1112,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   spinning: {
-    // Animation de rotation pour l'icône de rafraîchissement
     transform: [{ rotate: '360deg' }],
   },
   statusCard: {
@@ -942,6 +1120,19 @@ const styles = StyleSheet.create({
     padding: 16,
     marginHorizontal: 20,
     marginTop: -20,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  deviceStatusCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 20,
     marginBottom: 24,
     borderLeftWidth: 4,
     elevation: 4,
@@ -977,6 +1168,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#10b981',
     fontWeight: '600',
+    marginTop: 4,
+  },
+  currentPresentationInfo: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+  },
+  currentPresentationName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  currentSlideInfo: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  deviceId: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontFamily: 'monospace',
     marginTop: 4,
   },
   assignedSection: {
@@ -1087,7 +1300,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 4,
   },
-  // Sous-titre pour indiquer le mode boucle
   sectionSubtitle: {
     fontSize: 14,
     color: '#10b981',
@@ -1144,7 +1356,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 12,
   },
-  // Indicateur de lecture automatique en boucle
   autoLoopIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1178,7 +1389,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Styles pour les éléments focalisés avec bordures très visibles
   focusedCard: {
     borderWidth: 4,
     borderColor: '#3b82f6',
@@ -1344,7 +1554,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  // Styles pour la notification de présentation par défaut
   promptOverlay: {
     position: 'absolute',
     top: 100,

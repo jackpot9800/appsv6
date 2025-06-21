@@ -16,6 +16,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, Play, Pause, SkipBack, SkipForward, Monitor, Clock, CircleAlert as AlertCircle, RefreshCw, RotateCcw, Repeat } from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
+import { statusService, RemoteCommand } from '@/services/StatusService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -30,7 +31,7 @@ if (Platform.OS === 'android' || Platform.OS === 'ios') {
 }
 
 export default function PresentationScreen() {
-  const { id, auto_play, loop_mode, assigned } = useLocalSearchParams();
+  const { id, auto_play, loop_mode, assigned, restart, remote_command } = useLocalSearchParams();
   const [presentation, setPresentation] = useState<PresentationDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +133,50 @@ export default function PresentationScreen() {
     // Démarrer le monitoring des performances
     startPerformanceMonitoring();
     
+    // Configurer le callback pour les commandes à distance
+    statusService.setOnRemoteCommand(handleRemoteCommand);
+    
     return cleanupResources;
+  }, []);
+
+  // Gestion des commandes à distance
+  const handleRemoteCommand = useCallback((command: RemoteCommand) => {
+    console.log('=== HANDLING REMOTE COMMAND IN PRESENTATION ===', command);
+    
+    switch (command.command) {
+      case 'play':
+        setIsPlaying(true);
+        setShowControls(true);
+        break;
+        
+      case 'pause':
+        setIsPlaying(false);
+        setShowControls(true);
+        break;
+        
+      case 'stop':
+        setIsPlaying(false);
+        router.back();
+        break;
+        
+      case 'restart':
+        restartPresentation();
+        break;
+        
+      case 'next_slide':
+        nextSlide();
+        break;
+        
+      case 'prev_slide':
+        previousSlide();
+        break;
+        
+      case 'goto_slide':
+        if (command.parameters?.slide_index !== undefined) {
+          goToSlide(command.parameters.slide_index);
+        }
+        break;
+    }
   }, []);
 
   // Configuration des contrôles Fire TV optimisée
@@ -331,6 +375,22 @@ export default function PresentationScreen() {
     };
   }, [showControls, isPlaying, assigned]);
 
+  // Mettre à jour le statut lors des changements
+  useEffect(() => {
+    if (presentation) {
+      statusService.updatePresentationStatus(
+        presentation.id,
+        presentation.name || presentation.nom || 'Présentation',
+        currentSlideIndex,
+        presentation.slides.length,
+        isLooping,
+        auto_play === 'true'
+      );
+      
+      statusService.updatePlaybackStatus(isPlaying ? 'playing' : 'paused');
+    }
+  }, [presentation, currentSlideIndex, isLooping, isPlaying, auto_play]);
+
   const loadPresentation = async () => {
     try {
       setLoading(true);
@@ -351,6 +411,7 @@ export default function PresentationScreen() {
       console.error('Error loading presentation:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
       setError(errorMessage);
+      statusService.reportError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -440,7 +501,6 @@ export default function PresentationScreen() {
   const nextSlide = useCallback(() => {
     if (!presentation) return;
     
-    // CORRECTION: Supprimer la vérification de transition qui bloquait la boucle
     console.log(`=== NEXT SLIDE LOGIC ===`);
     console.log(`Current: ${currentSlideIndex + 1}/${presentation.slides.length}`);
     console.log(`Is looping: ${isLooping}`);
