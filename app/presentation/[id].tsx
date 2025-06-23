@@ -14,7 +14,19 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, Play, Pause, SkipBack, SkipForward, Monitor, Clock, CircleAlert as AlertCircle, RefreshCw, RotateCcw, Repeat } from 'lucide-react-native';
+import { 
+  ArrowLeft, 
+  Play, 
+  Pause, 
+  SkipBack, 
+  SkipForward, 
+  Monitor, 
+  Clock, 
+  CircleAlert as AlertCircle, 
+  RefreshCw, 
+  RotateCcw, 
+  Repeat 
+} from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
 
@@ -1130,6 +1142,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  assignedText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   autoPlayIndicator: {
     position: 'absolute',
     top: 70,
@@ -1142,6 +1159,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  autoPlayText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   optimizationIndicator: {
     position: 'absolute',
     top: 120,
@@ -1153,6 +1175,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  optimizationText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   controlsOverlay: {
     position: 'absolute',
