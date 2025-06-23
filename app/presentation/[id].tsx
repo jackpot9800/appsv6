@@ -14,19 +14,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { 
-  ArrowLeft, 
-  Play, 
-  Pause, 
-  SkipBack, 
-  SkipForward, 
-  Monitor, 
-  Clock, 
-  AlertCircle, 
-  RefreshCw, 
-  RotateCcw, 
-  Repeat 
-} from 'lucide-react-native';
+import { ArrowLeft, Play, Pause, SkipBack, SkipForward, Monitor, Clock, CircleAlert as AlertCircle, RefreshCw, RotateCcw, Repeat } from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
 
