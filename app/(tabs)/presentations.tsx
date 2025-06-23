@@ -6,12 +6,11 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Image,
   Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Monitor, Play, Clock, WifiOff, CircleAlert as AlertCircle } from 'lucide-react-native';
+import { Monitor, Play, Clock, WifiOff, CircleAlert as AlertCircle, RefreshCw, Settings } from 'lucide-react-native';
 import { apiService, Presentation } from '@/services/ApiService';
 
 export default function PresentationsScreen() {

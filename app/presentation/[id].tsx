@@ -14,7 +14,19 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, Play, Pause, SkipBack, SkipForward, Monitor, Clock, CircleAlert as AlertCircle, RefreshCw, RotateCcw, Repeat } from 'lucide-react-native';
+import { 
+  ArrowLeft, 
+  Play, 
+  Pause, 
+  SkipBack, 
+  SkipForward, 
+  Monitor, 
+  Clock, 
+  AlertCircle, 
+  RefreshCw, 
+  RotateCcw, 
+  Repeat 
+} from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
 
@@ -1314,15 +1326,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
-  },
-  assignedText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  autoPlayText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold',
   },
 });

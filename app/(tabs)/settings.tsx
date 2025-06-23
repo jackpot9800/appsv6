@@ -12,9 +12,24 @@ import {
   Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Server, Wifi, WifiOff, Check, CircleAlert as AlertCircle, Monitor, Settings as SettingsIcon, RefreshCw, Trash2, UserPlus, Activity, Zap } from 'lucide-react-native';
+import { 
+  Server, 
+  Wifi, 
+  WifiOff, 
+  Check, 
+  AlertCircle, 
+  Monitor, 
+  Settings as SettingsIcon, 
+  RefreshCw, 
+  Trash2, 
+  UserPlus, 
+  Activity, 
+  Zap,
+  Pause
+} from 'lucide-react-native';
 import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Import conditionnel de TVEventHandler
 let TVEventHandler: any = null;
