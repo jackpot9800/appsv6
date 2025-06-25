@@ -41,32 +41,35 @@ export default function HomeScreen() {
     totalSlides?: number;
     isLooping?: boolean;
   }>({});
-
+  
   // Référence pour le timer de keep-awake
   const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Activer le mode anti-veille
+    // Activer le mode anti-veille sur l'écran d'accueil
     if (Platform.OS !== 'web') {
       console.log('Activating keep awake mode on home screen');
       activateKeepAwake();
       
-      // Configurer un timer pour réactiver périodiquement le mode anti-veille
-      startKeepAwakeTimer();
+      // Créer un timer qui réactive périodiquement le mode anti-veille
+      keepAwakeTimerRef.current = setInterval(() => {
+        console.log('Refreshing keep awake mode on home screen');
+        activateKeepAwake();
+      }, 60000); // Toutes les minutes
     }
     
     initializeApp();
     initializeStatusService();
     
     return () => {
-      // Nettoyage lors du démontage du composant
-      if (autoLaunchDefaultTimer) {
-        clearTimeout(autoLaunchDefaultTimer);
-      }
-      
+      // Nettoyage du timer au démontage du composant
       if (keepAwakeTimerRef.current) {
         clearInterval(keepAwakeTimerRef.current);
         keepAwakeTimerRef.current = null;
+      }
+      
+      if (autoLaunchDefaultTimer) {
+        clearTimeout(autoLaunchDefaultTimer);
       }
       
       statusService.stop();
@@ -79,20 +82,14 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Fonction pour démarrer le timer de keep-awake
-  const startKeepAwakeTimer = () => {
-    if (keepAwakeTimerRef.current) {
-      clearInterval(keepAwakeTimerRef.current);
-    }
-    
-    // Réactiver le mode anti-veille toutes les 30 secondes
-    keepAwakeTimerRef.current = setInterval(() => {
-      if (Platform.OS !== 'web') {
-        console.log('Refreshing keep awake mode on home screen');
-        activateKeepAwake();
+  // Nettoyage du timer au démontage du composant
+  useEffect(() => {
+    return () => {
+      if (autoLaunchDefaultTimer) {
+        clearTimeout(autoLaunchDefaultTimer);
       }
-    }, 30000);
-  };
+    };
+  }, [autoLaunchDefaultTimer]);
 
   const initializeApp = async () => {
     setLoading(true);
@@ -607,6 +604,11 @@ export default function HomeScreen() {
             ✓ Surveillance des présentations par défaut active
           </Text>
         )}
+        {Platform.OS !== 'web' && (
+          <Text style={styles.assignmentStatus}>
+            ✓ Mode anti-veille activé
+          </Text>
+        )}
       </TouchableOpacity>
     );
   };
@@ -888,6 +890,9 @@ export default function HomeScreen() {
           <RefreshCw size={48} color="#ffffff" />
           <Text style={styles.loadingText}>Initialisation de l'application...</Text>
           <Text style={styles.loadingSubtext}>Vérification des assignations...</Text>
+          {Platform.OS !== 'web' && (
+            <Text style={styles.loadingSubtext}>Mode anti-veille activé</Text>
+          )}
         </LinearGradient>
       </View>
     );
@@ -953,6 +958,7 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.sectionSubtitle}>
               🔄 Lecture automatique en boucle activée • 📡 Contrôle à distance
+              {Platform.OS !== 'web' && ' • 🔋 Mode anti-veille'}
             </Text>
           </View>
           
@@ -1050,7 +1056,7 @@ export default function HomeScreen() {
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
               {'\n'}Contrôle à distance: Activé
-              {'\n'}Anti-veille: Activé
+              {Platform.OS !== 'web' && '\n'}Mode anti-veille: Activé
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
               {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>
