@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// Définition des clés de stockage
 const STORAGE_KEYS = {
   SERVER_URL: 'server_url',
   DEVICE_ID: 'device_id',
@@ -600,7 +601,7 @@ class ApiService {
   isDeviceRegistered(): boolean {
     return this.isRegistered;
   }
-
+  
   getLastConnectionError(): string {
     return this.lastConnectionError;
   }

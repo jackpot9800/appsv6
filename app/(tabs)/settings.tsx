@@ -42,6 +42,16 @@ if (Platform.OS === 'android' || Platform.OS === 'ios') {
   }
 }
 
+// Définition des clés de stockage pour éviter les erreurs
+const STORAGE_KEYS = {
+  SERVER_URL: 'server_url',
+  DEVICE_ID: 'device_id',
+  DEVICE_REGISTERED: 'device_registered',
+  ENROLLMENT_TOKEN: 'enrollment_token',
+  ASSIGNED_PRESENTATION: 'assigned_presentation',
+  DEFAULT_PRESENTATION: 'default_presentation',
+};
+
 export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState('');
   const [originalUrl, setOriginalUrl] = useState('');
@@ -186,14 +196,14 @@ export default function SettingsScreen() {
       const info = await apiService.getDebugInfo();
       setDebugInfo(info);
       
+      // Récupérer la dernière erreur de connexion
+      setConnectionError(info.lastConnectionError || '');
+      
       // Récupérer le statut actuel
       const status = statusService.getCurrentStatusSync();
       if (status) {
         setDeviceStatus(status.status);
       }
-      
-      // Récupérer la dernière erreur de connexion
-      setConnectionError(info.lastConnectionError || '');
     } catch (error) {
       console.error('Error loading debug info:', error);
     }
