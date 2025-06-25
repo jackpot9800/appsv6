@@ -32,16 +32,6 @@ import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Import conditionnel de TVEventHandler
-let TVEventHandler: any = null;
-if (Platform.OS === 'android' || Platform.OS === 'ios') {
-  try {
-    TVEventHandler = require('react-native').TVEventHandler;
-  } catch (error) {
-    console.log('TVEventHandler not available on this platform');
-  }
-}
-
 // Définition des clés de stockage pour éviter les erreurs
 const STORAGE_KEYS = {
   SERVER_URL: 'server_url',
@@ -51,6 +41,16 @@ const STORAGE_KEYS = {
   ASSIGNED_PRESENTATION: 'assigned_presentation',
   DEFAULT_PRESENTATION: 'default_presentation',
 };
+
+// Import conditionnel de TVEventHandler
+let TVEventHandler: any = null;
+if (Platform.OS === 'android' || Platform.OS === 'ios') {
+  try {
+    TVEventHandler = require('react-native').TVEventHandler;
+  } catch (error) {
+    console.log('TVEventHandler not available on this platform');
+  }
+}
 
 export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState('');

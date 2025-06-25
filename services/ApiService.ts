@@ -90,6 +90,7 @@ class ApiService {
   private apiType: 'standard' | 'affichageDynamique' = 'affichageDynamique'; // Par défaut affichageDynamique
   private lastConnectionError: string = '';
   private connectionAttempts: number = 0;
+  private directFetchMode: boolean = false; // Mode fetch direct pour contourner les problèmes
 
   async initialize() {
     try {
@@ -524,7 +525,8 @@ class ApiService {
         assignmentCheckEnabled: this.assignmentCheckEnabled,
         defaultCheckEnabled: this.defaultCheckEnabled,
         apiType: this.apiType,
-        lastConnectionError: this.lastConnectionError
+        lastConnectionError: this.lastConnectionError,
+        connectionAttempts: this.connectionAttempts
       };
     }
   }
@@ -556,6 +558,9 @@ class ApiService {
       this.assignmentCheckEnabled = false;
       this.defaultCheckEnabled = false;
       this.apiType = 'affichageDynamique'; // Par défaut affichageDynamique
+      this.lastConnectionError = '';
+      this.connectionAttempts = 0;
+      
       await AsyncStorage.removeItem(STORAGE_KEYS.DEVICE_REGISTERED);
       await AsyncStorage.removeItem(STORAGE_KEYS.ENROLLMENT_TOKEN);
       await AsyncStorage.removeItem(STORAGE_KEYS.ASSIGNED_PRESENTATION);
@@ -812,6 +817,7 @@ class ApiService {
       'Accept': 'application/json',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
+      'Expires': '0',
       'User-Agent': 'PresentationKiosk/2.0 (Android; FireTV)',
       'X-Device-ID': this.deviceId,
       'X-Device-Type': 'firetv',
