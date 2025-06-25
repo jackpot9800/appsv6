@@ -87,6 +87,8 @@ class ApiService {
   private assignmentCheckEnabled: boolean = false;
   private defaultCheckEnabled: boolean = false;
   private apiType: 'standard' | 'affichageDynamique' = 'affichageDynamique'; // Par défaut affichageDynamique
+  private lastConnectionError: string = '';
+  private connectionAttempts: number = 0;
 
   async initialize() {
     try {
@@ -520,7 +522,8 @@ class ApiService {
         isRegistered: this.isRegistered,
         assignmentCheckEnabled: this.assignmentCheckEnabled,
         defaultCheckEnabled: this.defaultCheckEnabled,
-        apiType: this.apiType
+        apiType: this.apiType,
+        lastConnectionError: this.lastConnectionError
       };
     }
   }
@@ -596,6 +599,10 @@ class ApiService {
 
   isDeviceRegistered(): boolean {
     return this.isRegistered;
+  }
+
+  getLastConnectionError(): string {
+    return this.lastConnectionError;
   }
 
   /**
@@ -822,6 +829,9 @@ class ApiService {
     }
     
     try {
+      this.connectionAttempts++;
+      console.log(`Connection attempt #${this.connectionAttempts} to ${url}`);
+      
       const response = await this.fetchWithTimeout(url, {
         ...options,
         headers,
@@ -839,6 +849,9 @@ class ApiService {
         console.error('=== HTTP ERROR ===');
         console.error('Status:', response.status);
         console.error('Response:', responseText);
+        
+        // Stocker l'erreur pour le diagnostic
+        this.lastConnectionError = `HTTP ${response.status}: ${responseText.substring(0, 200)}`;
         
         if (response.status === 500) {
           throw new Error('Erreur serveur interne (500). Vérifiez les logs PHP de votre serveur.');
@@ -859,18 +872,28 @@ class ApiService {
       }
 
       if (!responseText.trim()) {
+        this.lastConnectionError = "Réponse vide du serveur";
         throw new Error('Réponse vide du serveur');
       }
 
+      // Réinitialiser le compteur d'erreurs en cas de succès
+      this.connectionAttempts = 0;
+      this.lastConnectionError = '';
+      
       return this.extractJsonFromResponse(responseText);
 
     } catch (error) {
+      // Stocker l'erreur pour le diagnostic
       if (error instanceof Error) {
+        this.lastConnectionError = error.message;
+        
         if (error.message.includes('Timeout après')) {
           throw new Error(`Timeout de connexion: ${url}`);
         } else if (error.message.includes('fetch') || error.message.includes('Network')) {
           throw new Error(`Impossible de se connecter au serveur: ${url}\n\nVérifiez que votre appareil est connecté au même réseau que le serveur.`);
         }
+      } else {
+        this.lastConnectionError = "Erreur inconnue";
       }
       throw error;
     }
@@ -886,22 +909,50 @@ class ApiService {
         return false;
       }
       
-      const response = await this.makeRequest<any>('/version');
-      console.log('Connection test response:', response);
-      
-      const isConnected = response.status === 'running' || 
-                         response.api_status === 'running' || 
-                         response.version !== undefined ||
-                         response.database === 'affichageDynamique';
-      
-      console.log('Connection test result:', isConnected);
-      
-      // Détecter le type d'API lors du test de connexion
-      if (isConnected) {
-        await this.detectApiType();
+      // Essayer d'abord avec /version
+      try {
+        const response = await this.makeRequest<any>('/version');
+        console.log('Connection test response:', response);
+        
+        const isConnected = response.status === 'running' || 
+                          response.api_status === 'running' || 
+                          response.version !== undefined ||
+                          response.database === 'affichageDynamique';
+        
+        console.log('Connection test result:', isConnected);
+        
+        // Détecter le type d'API lors du test de connexion
+        if (isConnected) {
+          await this.detectApiType();
+          return true;
+        }
+      } catch (error) {
+        console.log('First connection test failed, trying root endpoint...');
       }
       
-      return isConnected;
+      // Si /version échoue, essayer avec l'endpoint racine
+      try {
+        const response = await this.makeRequest<any>('');
+        console.log('Root endpoint test response:', response);
+        
+        const isConnected = response.status === 'running' || 
+                          response.api_status === 'running' || 
+                          response.version !== undefined ||
+                          response.database === 'affichageDynamique' ||
+                          response.endpoints !== undefined;
+        
+        console.log('Root endpoint test result:', isConnected);
+        
+        if (isConnected) {
+          await this.detectApiType();
+          return true;
+        }
+      } catch (error) {
+        console.error('Both connection tests failed:', error);
+        return false;
+      }
+      
+      return false;
     } catch (error) {
       console.error('Connection test failed:', error);
       return false;
@@ -1145,6 +1196,8 @@ class ApiService {
     defaultCheckActive: boolean;
     defaultCheckEnabled: boolean;
     apiType: string;
+    lastConnectionError: string;
+    connectionAttempts: number;
   }> {
     return {
       serverUrl: this.baseUrl,
@@ -1155,7 +1208,9 @@ class ApiService {
       assignmentCheckEnabled: this.assignmentCheckEnabled,
       defaultCheckActive: !!this.defaultCheckInterval,
       defaultCheckEnabled: this.defaultCheckEnabled,
-      apiType: this.apiType
+      apiType: this.apiType,
+      lastConnectionError: this.lastConnectionError,
+      connectionAttempts: this.connectionAttempts
     };
   }
 
@@ -1170,6 +1225,8 @@ class ApiService {
     this.assignmentCheckEnabled = false;
     this.defaultCheckEnabled = false;
     this.apiType = 'affichageDynamique';
+    this.lastConnectionError = '';
+    this.connectionAttempts = 0;
     
     await AsyncStorage.removeItem(STORAGE_KEYS.DEVICE_REGISTERED);
     await AsyncStorage.removeItem(STORAGE_KEYS.ENROLLMENT_TOKEN);

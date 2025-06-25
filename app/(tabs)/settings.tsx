@@ -60,6 +60,7 @@ export default function SettingsScreen() {
   const [autoRestartEnabled, setAutoRestartEnabled] = useState(true);
   const [memoryOptimizationEnabled, setMemoryOptimizationEnabled] = useState(true);
   const [deviceStatus, setDeviceStatus] = useState<string>('online');
+  const [connectionError, setConnectionError] = useState<string>('');
 
   useEffect(() => {
     loadCurrentSettings();
@@ -190,6 +191,9 @@ export default function SettingsScreen() {
       if (status) {
         setDeviceStatus(status.status);
       }
+      
+      // Récupérer la dernière erreur de connexion
+      setConnectionError(info.lastConnectionError || '');
     } catch (error) {
       console.error('Error loading debug info:', error);
     }
@@ -247,30 +251,47 @@ export default function SettingsScreen() {
       
       console.log('Testing connection to:', finalUrl);
       
+      // Créer une instance temporaire pour tester
+      const tempApiService = { ...apiService };
+      
+      // Définir l'URL temporairement pour le test
+      await AsyncStorage.setItem(STORAGE_KEYS.SERVER_URL, finalUrl);
+      
+      // Tester directement avec fetch pour éviter les problèmes de configuration
       const response = await fetch(`${finalUrl}/version`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'User-Agent': 'PresentationKiosk/2.0 (FireTV)',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
         },
       });
       
       console.log('Test response status:', response.status);
       
       if (response.ok) {
-        const data = await response.json();
-        console.log('Test response data:', data);
+        const responseText = await response.text();
+        console.log('Test response text:', responseText);
         
-        if (data.api_status === 'running' || data.status === 'running' || data.version) {
-          setConnectionStatus('success');
+        try {
+          const data = JSON.parse(responseText);
+          console.log('Test response data:', data);
           
-          Alert.alert(
-            'Test de connexion réussi',
-            `Connexion au serveur établie avec succès !\n\nVersion API: ${data.version || 'N/A'}\nStatut: ${data.api_status || data.status || 'running'}`,
-            [{ text: 'OK' }]
-          );
-          return true;
+          if (data.api_status === 'running' || data.status === 'running' || data.version) {
+            setConnectionStatus('success');
+            
+            Alert.alert(
+              'Test de connexion réussi',
+              `Connexion au serveur établie avec succès !\n\nVersion API: ${data.version || 'N/A'}\nStatut: ${data.api_status || data.status || 'running'}`,
+              [{ text: 'OK' }]
+            );
+            return true;
+          }
+        } catch (parseError) {
+          console.error('Error parsing JSON response:', parseError);
+          console.error('Response text:', responseText);
         }
       }
       
@@ -556,6 +577,14 @@ export default function SettingsScreen() {
           </View>
 
           {renderConnectionStatus()}
+          
+          {/* Afficher l'erreur de connexion si présente */}
+          {connectionError && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorTitle}>Dernière erreur de connexion:</Text>
+              <Text style={styles.errorMessage}>{connectionError}</Text>
+            </View>
+          )}
 
           <View style={styles.buttonContainer}>
             <TouchableOpacity
@@ -729,6 +758,18 @@ export default function SettingsScreen() {
                     </Text>
                   </View>
                 </View>
+                
+                {debugInfo.connectionAttempts > 0 && (
+                  <View style={styles.infoRow}>
+                    <AlertCircle size={20} color={debugInfo.connectionAttempts > 3 ? "#ef4444" : "#f59e0b"} />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Tentatives de connexion</Text>
+                      <Text style={styles.infoValue}>
+                        {debugInfo.connectionAttempts}
+                      </Text>
+                    </View>
+                  </View>
+                )}
               </>
             )}
           </View>
@@ -1213,5 +1254,24 @@ const styles = StyleSheet.create({
   helpBold: {
     fontWeight: 'bold',
     color: '#ffffff',
+  },
+  errorContainer: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ef4444',
+    marginBottom: 4,
+  },
+  errorMessage: {
+    fontSize: 12,
+    color: '#ef4444',
+    lineHeight: 18,
   },
 });
