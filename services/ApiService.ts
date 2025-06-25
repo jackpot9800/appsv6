@@ -879,6 +879,13 @@ class ApiService {
   async testConnection(): Promise<boolean> {
     try {
       console.log('=== TESTING CONNECTION ===');
+      console.log('Testing URL:', this.baseUrl);
+      
+      if (!this.baseUrl) {
+        console.log('No server URL configured');
+        return false;
+      }
+      
       const response = await this.makeRequest<any>('/version');
       console.log('Connection test response:', response);
       
