@@ -31,7 +31,6 @@ export default function HomeScreen() {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showDefaultPresentationPrompt, setShowDefaultPresentationPrompt] = useState(false);
   const [autoLaunchDefaultTimer, setAutoLaunchDefaultTimer] = useState<NodeJS.Timeout | null>(null);
-  const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Nouveaux états pour le statut temps réel
   const [deviceStatus, setDeviceStatus] = useState<'online' | 'offline' | 'playing' | 'paused' | 'error'>('offline');
@@ -42,48 +41,60 @@ export default function HomeScreen() {
     totalSlides?: number;
     isLooping?: boolean;
   }>({});
-  const [keepAwakeActive, setKeepAwakeActive] = useState(false);
+  
+  // État pour le mode anti-veille
+  const [keepAwakeActive, setKeepAwakeActive] = useState(true);
+  const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     initializeApp();
     initializeStatusService();
-    initializeKeepAwake();
     
+    // Activer le mode anti-veille
+    if (Platform.OS !== 'web') {
+      console.log('Activating keep awake mode on home screen');
+      activateKeepAwake();
+      startKeepAwakeRefreshTimer();
+    }
+
     return () => {
-      // Nettoyage lors du démontage du composant
+      // Nettoyage
       if (autoLaunchDefaultTimer) {
         clearTimeout(autoLaunchDefaultTimer);
       }
       statusService.stop();
       
-      // Désactiver le mode anti-veille
+      // Désactiver le mode anti-veille lors du démontage
       if (Platform.OS !== 'web') {
-        console.log('Deactivating keep awake on component unmount');
+        console.log('Deactivating keep awake mode on home screen unmount');
         deactivateKeepAwake();
-        
-        if (keepAwakeTimerRef.current) {
-          clearInterval(keepAwakeTimerRef.current);
-          keepAwakeTimerRef.current = null;
-        }
+        stopKeepAwakeRefreshTimer();
       }
     };
   }, []);
-
-  // Initialisation du mode anti-veille
-  const initializeKeepAwake = () => {
-    if (Platform.OS !== 'web') {
-      console.log('Initializing keep awake mode to prevent screen timeout');
-      
-      // Activer le mode anti-veille
-      activateKeepAwake();
-      setKeepAwakeActive(true);
-      
-      // Créer un timer qui réactive périodiquement le mode anti-veille
-      // pour s'assurer que l'écran ne s'éteint jamais
-      keepAwakeTimerRef.current = setInterval(() => {
+  
+  // Fonction pour démarrer le timer de rafraîchissement du mode anti-veille
+  const startKeepAwakeRefreshTimer = () => {
+    if (keepAwakeTimerRef.current) {
+      clearInterval(keepAwakeTimerRef.current);
+    }
+    
+    // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
+    keepAwakeTimerRef.current = setInterval(() => {
+      if (Platform.OS !== 'web') {
         console.log('Refreshing keep awake mode to prevent screen timeout');
+        // Réactiver le mode anti-veille
         activateKeepAwake();
-      }, 30000); // Toutes les 30 secondes
+        setKeepAwakeActive(true);
+      }
+    }, 30000);
+  };
+  
+  // Fonction pour arrêter le timer de rafraîchissement du mode anti-veille
+  const stopKeepAwakeRefreshTimer = () => {
+    if (keepAwakeTimerRef.current) {
+      clearInterval(keepAwakeTimerRef.current);
+      keepAwakeTimerRef.current = null;
     }
   };
 
@@ -509,13 +520,6 @@ export default function HomeScreen() {
       }
     }
     
-    // Réactiver le mode anti-veille
-    if (Platform.OS !== 'web') {
-      console.log('Refreshing keep awake mode after manual refresh');
-      activateKeepAwake();
-      setKeepAwakeActive(true);
-    }
-    
     setRefreshing(false);
   };
 
@@ -607,7 +611,7 @@ export default function HomeScreen() {
             ✓ Surveillance des présentations par défaut active
           </Text>
         )}
-        {keepAwakeActive && (
+        {keepAwakeActive && Platform.OS !== 'web' && (
           <Text style={styles.keepAwakeStatus}>
             ✓ Mode anti-veille actif (écran toujours allumé)
           </Text>
@@ -655,6 +659,13 @@ export default function HomeScreen() {
         <Text style={styles.deviceId}>
           ID: {apiService.getDeviceId()}
         </Text>
+        
+        {keepAwakeActive && Platform.OS !== 'web' && (
+          <View style={styles.keepAwakeIndicator}>
+            <Clock size={14} color="#10b981" />
+            <Text style={styles.keepAwakeText}>Mode anti-veille actif</Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -961,12 +972,8 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.sectionSubtitle}>
               🔄 Lecture automatique en boucle activée • 📡 Contrôle à distance
+              {Platform.OS !== 'web' && ' • 🔒 Mode anti-veille actif'}
             </Text>
-            {Platform.OS !== 'web' && keepAwakeActive && (
-              <Text style={styles.keepAwakeIndicator}>
-                🔆 Mode anti-veille actif - L'écran restera allumé
-              </Text>
-            )}
           </View>
           
           {connectionStatus === 'not_configured' ? (
@@ -1063,7 +1070,7 @@ export default function HomeScreen() {
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
               {'\n'}Contrôle à distance: Activé
-              {Platform.OS !== 'web' ? '\n'}Mode anti-veille: Activé (écran toujours allumé)' : ''}
+              {Platform.OS !== 'web' && '\n'}Mode anti-veille: Activé (écran toujours allumé)
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
               {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>
@@ -1224,7 +1231,7 @@ const styles = StyleSheet.create({
   },
   keepAwakeStatus: {
     fontSize: 12,
-    color: '#f59e0b',
+    color: '#3b82f6',
     fontWeight: '600',
     marginTop: 4,
   },
@@ -1249,6 +1256,21 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     fontFamily: 'monospace',
     marginTop: 4,
+  },
+  keepAwakeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  keepAwakeText: {
+    fontSize: 12,
+    color: '#10b981',
+    marginLeft: 4,
   },
   assignedSection: {
     paddingHorizontal: 20,
@@ -1363,13 +1385,6 @@ const styles = StyleSheet.create({
     color: '#10b981',
     fontWeight: '600',
     textAlign: 'center',
-  },
-  keepAwakeIndicator: {
-    fontSize: 14,
-    color: '#f59e0b',
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: 4,
   },
   presentationsGrid: {
     gap: 16,
