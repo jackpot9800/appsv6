@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus } from 'lucide-react-native';
 import { apiService, Presentation, AssignedPresentation, DefaultPresentation } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
+import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 
 const { width } = Dimensions.get('window');
 
@@ -41,20 +42,57 @@ export default function HomeScreen() {
     isLooping?: boolean;
   }>({});
 
+  // Référence pour le timer de keep-awake
+  const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
+    // Activer le mode anti-veille
+    if (Platform.OS !== 'web') {
+      console.log('Activating keep awake mode on home screen');
+      activateKeepAwake();
+      
+      // Configurer un timer pour réactiver périodiquement le mode anti-veille
+      startKeepAwakeTimer();
+    }
+    
     initializeApp();
     initializeStatusService();
-  }, []);
-
-  // Nettoyage du timer au démontage du composant
-  useEffect(() => {
+    
     return () => {
+      // Nettoyage lors du démontage du composant
       if (autoLaunchDefaultTimer) {
         clearTimeout(autoLaunchDefaultTimer);
       }
+      
+      if (keepAwakeTimerRef.current) {
+        clearInterval(keepAwakeTimerRef.current);
+        keepAwakeTimerRef.current = null;
+      }
+      
       statusService.stop();
+      
+      // Désactiver le mode anti-veille lors du démontage
+      if (Platform.OS !== 'web') {
+        console.log('Deactivating keep awake mode when leaving home screen');
+        deactivateKeepAwake();
+      }
     };
-  }, [autoLaunchDefaultTimer]);
+  }, []);
+
+  // Fonction pour démarrer le timer de keep-awake
+  const startKeepAwakeTimer = () => {
+    if (keepAwakeTimerRef.current) {
+      clearInterval(keepAwakeTimerRef.current);
+    }
+    
+    // Réactiver le mode anti-veille toutes les 30 secondes
+    keepAwakeTimerRef.current = setInterval(() => {
+      if (Platform.OS !== 'web') {
+        console.log('Refreshing keep awake mode on home screen');
+        activateKeepAwake();
+      }
+    }, 30000);
+  };
 
   const initializeApp = async () => {
     setLoading(true);
@@ -1012,6 +1050,7 @@ export default function HomeScreen() {
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
               {'\n'}Contrôle à distance: Activé
+              {'\n'}Anti-veille: Activé
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
               {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>

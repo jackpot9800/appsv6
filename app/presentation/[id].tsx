@@ -29,6 +29,7 @@ import {
 } from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
+import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 
 const { width, height } = Dimensions.get('window');
 
@@ -65,6 +66,7 @@ export default function PresentationScreen() {
   const lastSlideChangeRef = useRef<number>(0);
   const performanceMonitorRef = useRef<NodeJS.Timeout | null>(null);
   const slideChangeInProgressRef = useRef<boolean>(false);
+  const keepScreenAwakeRef = useRef<NodeJS.Timeout | null>(null);
 
   // Nettoyage complet des ressources
   const cleanupResources = useCallback(() => {
@@ -84,6 +86,11 @@ export default function PresentationScreen() {
     if (performanceMonitorRef.current) {
       clearInterval(performanceMonitorRef.current);
       performanceMonitorRef.current = null;
+    }
+    
+    if (keepScreenAwakeRef.current) {
+      clearInterval(keepScreenAwakeRef.current);
+      keepScreenAwakeRef.current = null;
     }
     
     // Désactiver le gestionnaire TV
@@ -125,7 +132,30 @@ export default function PresentationScreen() {
     }, 30000); // Vérifier toutes les 30 secondes
   }, [isLooping, isPlaying, loopCount, memoryOptimization]);
 
+  // Fonction pour maintenir l'écran allumé
+  const startKeepAwakeTimer = useCallback(() => {
+    if (keepScreenAwakeRef.current) {
+      clearInterval(keepScreenAwakeRef.current);
+    }
+    
+    // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
+    keepScreenAwakeRef.current = setInterval(() => {
+      if (Platform.OS !== 'web') {
+        console.log('Refreshing keep awake mode to prevent screen timeout');
+        // Réactiver le mode anti-veille
+        activateKeepAwake();
+      }
+    }, 30000);
+  }, []);
+
   useEffect(() => {
+    // Activer le mode anti-veille spécifiquement pour cette page
+    if (Platform.OS !== 'web') {
+      console.log('Activating keep awake mode for presentation screen');
+      activateKeepAwake();
+      startKeepAwakeTimer();
+    }
+    
     loadPresentation();
     
     // Configurer selon les paramètres d'assignation
@@ -148,7 +178,15 @@ export default function PresentationScreen() {
     // Configurer le callback pour les commandes à distance
     statusService.setOnRemoteCommand(handleRemoteCommand);
     
-    return cleanupResources;
+    return () => {
+      cleanupResources();
+      
+      // Désactiver le mode anti-veille lors du démontage du composant
+      if (Platform.OS !== 'web') {
+        console.log('Deactivating keep awake mode when leaving presentation screen');
+        deactivateKeepAwake();
+      }
+    };
   }, []);
 
   // Gestion des commandes à distance
