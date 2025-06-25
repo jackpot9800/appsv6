@@ -13,17 +13,18 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus, Moon } from 'lucide-react-native';
+import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus, Moon, Sun } from 'lucide-react-native';
 import { apiService, Presentation, AssignedPresentation, DefaultPresentation } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
-import { activateKeepAwake, deactivateKeepAwake, useKeepAwake } from 'expo-keep-awake';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 
 const { width } = Dimensions.get('window');
 
+// Clé pour stocker la préférence de mode anti-veille
+const KEEP_AWAKE_ENABLED_KEY = 'keep_awake_enabled';
+
 export default function HomeScreen() {
-  // Activer le mode anti-veille pour cette page
-  useKeepAwake();
-  
   const [presentations, setPresentations] = useState<Presentation[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -46,106 +47,83 @@ export default function HomeScreen() {
     isLooping?: boolean;
   }>({});
   
-  // État pour le mode anti-veille
+  // Nouvel état pour le mode anti-veille
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
   const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     initializeApp();
     initializeStatusService();
-    initializeKeepAwake();
+    loadKeepAwakePreference();
     
-    // Nettoyage lors du démontage du composant
+    // Démarrer le timer anti-veille
+    startKeepAwakeTimer();
+    
     return () => {
-      cleanupKeepAwake();
+      // Nettoyer le timer au démontage
+      if (keepAwakeTimerRef.current) {
+        clearInterval(keepAwakeTimerRef.current);
+      }
+      
       if (autoLaunchDefaultTimer) {
         clearTimeout(autoLaunchDefaultTimer);
       }
+      
       statusService.stop();
+      
+      // Désactiver le mode anti-veille si on quitte l'application
+      if (Platform.OS !== 'web') {
+        deactivateKeepAwake();
+      }
     };
   }, []);
   
-  // Initialisation du mode anti-veille
-  const initializeKeepAwake = () => {
+  // Effet pour gérer le mode anti-veille
+  useEffect(() => {
     if (Platform.OS !== 'web') {
-      console.log('=== INITIALIZING KEEP AWAKE MODE ===');
-      
-      // Activer le mode anti-veille par défaut
-      activateKeepAwake();
-      
-      // Démarrer le timer qui réactive périodiquement le mode anti-veille
-      startKeepAwakeTimer();
-      
-      // Charger la préférence utilisateur depuis le stockage
-      AsyncStorage.getItem('keep_awake_enabled')
-        .then(value => {
-          const enabled = value !== 'false'; // Par défaut activé
-          setKeepAwakeEnabled(enabled);
-          
-          if (!enabled) {
-            deactivateKeepAwake();
-            stopKeepAwakeTimer();
-          }
-        })
-        .catch(error => {
-          console.error('Error loading keep awake preference:', error);
-        });
-    }
-  };
-  
-  // Démarrer le timer qui réactive périodiquement le mode anti-veille
-  const startKeepAwakeTimer = () => {
-    if (keepAwakeTimerRef.current) {
-      clearInterval(keepAwakeTimerRef.current);
-    }
-    
-    // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
-    keepAwakeTimerRef.current = setInterval(() => {
-      if (Platform.OS !== 'web' && keepAwakeEnabled) {
-        console.log('Refreshing keep awake mode to prevent screen timeout');
-        activateKeepAwake();
-      }
-    }, 30000);
-  };
-  
-  // Arrêter le timer anti-veille
-  const stopKeepAwakeTimer = () => {
-    if (keepAwakeTimerRef.current) {
-      clearInterval(keepAwakeTimerRef.current);
-      keepAwakeTimerRef.current = null;
-    }
-  };
-  
-  // Nettoyer les ressources anti-veille
-  const cleanupKeepAwake = () => {
-    stopKeepAwakeTimer();
-    if (Platform.OS !== 'web') {
-      deactivateKeepAwake();
-    }
-  };
-  
-  // Basculer le mode anti-veille
-  const toggleKeepAwake = () => {
-    const newValue = !keepAwakeEnabled;
-    setKeepAwakeEnabled(newValue);
-    
-    if (Platform.OS !== 'web') {
-      if (newValue) {
+      if (keepAwakeEnabled) {
         console.log('Activating keep awake mode');
         activateKeepAwake();
         startKeepAwakeTimer();
       } else {
         console.log('Deactivating keep awake mode');
         deactivateKeepAwake();
-        stopKeepAwakeTimer();
+        if (keepAwakeTimerRef.current) {
+          clearInterval(keepAwakeTimerRef.current);
+          keepAwakeTimerRef.current = null;
+        }
       }
+      
+      // Sauvegarder la préférence
+      AsyncStorage.setItem(KEEP_AWAKE_ENABLED_KEY, String(keepAwakeEnabled));
     }
-    
-    // Sauvegarder la préférence
-    AsyncStorage.setItem('keep_awake_enabled', newValue.toString())
-      .catch(error => {
-        console.error('Error saving keep awake preference:', error);
-      });
+  }, [keepAwakeEnabled]);
+
+  const loadKeepAwakePreference = async () => {
+    try {
+      const savedPreference = await AsyncStorage.getItem(KEEP_AWAKE_ENABLED_KEY);
+      if (savedPreference !== null) {
+        setKeepAwakeEnabled(savedPreference === 'true');
+      }
+    } catch (error) {
+      console.error('Error loading keep awake preference:', error);
+    }
+  };
+  
+  // Fonction pour démarrer le timer qui maintient l'écran allumé
+  const startKeepAwakeTimer = () => {
+    if (Platform.OS !== 'web' && keepAwakeEnabled) {
+      // Nettoyer l'ancien timer s'il existe
+      if (keepAwakeTimerRef.current) {
+        clearInterval(keepAwakeTimerRef.current);
+      }
+      
+      // Créer un nouveau timer qui réactive le mode anti-veille toutes les 30 secondes
+      keepAwakeTimerRef.current = setInterval(() => {
+        console.log('Refreshing keep awake mode to prevent screen timeout');
+        activateKeepAwake();
+      }, 30000);
+    }
   };
 
   const initializeApp = async () => {
@@ -702,24 +680,25 @@ export default function HomeScreen() {
         )}
         
         <View style={styles.deviceControls}>
-          <View style={styles.deviceId}>
-            <Text style={styles.deviceIdText}>
-              ID: {apiService.getDeviceId()}
-            </Text>
-          </View>
+          <Text style={styles.deviceId}>
+            ID: {apiService.getDeviceId()}
+          </Text>
           
           <View style={styles.keepAwakeControl}>
-            <Moon size={16} color={keepAwakeEnabled ? "#10b981" : "#6b7280"} />
-            <Text style={[styles.keepAwakeText, { color: keepAwakeEnabled ? "#10b981" : "#6b7280" }]}>
-              Anti-veille
+            <Text style={styles.keepAwakeLabel}>
+              Mode anti-veille:
             </Text>
             <Switch
               value={keepAwakeEnabled}
-              onValueChange={toggleKeepAwake}
+              onValueChange={setKeepAwakeEnabled}
               trackColor={{ false: '#6b7280', true: '#10b981' }}
               thumbColor={keepAwakeEnabled ? '#ffffff' : '#f4f3f4'}
-              style={styles.keepAwakeSwitch}
             />
+            {keepAwakeEnabled ? (
+              <Sun size={16} color="#10b981" style={styles.keepAwakeIcon} />
+            ) : (
+              <Moon size={16} color="#6b7280" style={styles.keepAwakeIcon} />
+            )}
           </View>
         </View>
       </View>
@@ -1122,7 +1101,7 @@ export default function HomeScreen() {
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
               {'\n'}Contrôle à distance: Activé
-              {'\n'}Anti-veille: {keepAwakeEnabled ? 'Activé' : 'Désactivé'}
+              {'\n'}Mode anti-veille: {keepAwakeEnabled ? 'Activé' : 'Désactivé'}
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
               {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>
@@ -1297,36 +1276,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
   },
-  deviceControls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
   deviceId: {
-    flex: 1,
-  },
-  deviceIdText: {
     fontSize: 12,
     color: '#9ca3af',
     fontFamily: 'monospace',
   },
+  deviceControls: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   keepAwakeControl: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
   },
-  keepAwakeText: {
+  keepAwakeLabel: {
     fontSize: 12,
-    fontWeight: '600',
-    marginHorizontal: 6,
+    color: '#6b7280',
+    marginRight: 8,
   },
-  keepAwakeSwitch: {
-    transform: [{ scale: 0.7 }],
-    marginLeft: -5,
+  keepAwakeIcon: {
+    marginLeft: 4,
   },
   assignedSection: {
     paddingHorizontal: 20,
