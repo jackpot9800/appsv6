@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus } from 'lucide-react-native';
+import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus, Moon } from 'lucide-react-native';
 import { apiService, Presentation, AssignedPresentation, DefaultPresentation } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
@@ -54,48 +54,68 @@ export default function HomeScreen() {
     if (Platform.OS !== 'web') {
       console.log('Activating keep awake mode on home screen');
       activateKeepAwake();
-      startKeepAwakeRefreshTimer();
+      startKeepAwakeTimer();
     }
-
+    
     return () => {
-      // Nettoyage
       if (autoLaunchDefaultTimer) {
         clearTimeout(autoLaunchDefaultTimer);
       }
       statusService.stop();
       
-      // Désactiver le mode anti-veille lors du démontage
-      if (Platform.OS !== 'web') {
-        console.log('Deactivating keep awake mode on home screen unmount');
-        deactivateKeepAwake();
-        stopKeepAwakeRefreshTimer();
+      // Nettoyage du timer anti-veille
+      if (keepAwakeTimerRef.current) {
+        clearInterval(keepAwakeTimerRef.current);
+        keepAwakeTimerRef.current = null;
       }
+      
+      // Ne pas désactiver le mode anti-veille lors du démontage
+      // car on veut qu'il reste actif pendant toute la durée de l'application
     };
   }, []);
   
-  // Fonction pour démarrer le timer de rafraîchissement du mode anti-veille
-  const startKeepAwakeRefreshTimer = () => {
+  // Fonction pour démarrer le timer anti-veille
+  const startKeepAwakeTimer = () => {
     if (keepAwakeTimerRef.current) {
       clearInterval(keepAwakeTimerRef.current);
     }
     
-    // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
+    // Réactiver le mode anti-veille toutes les 30 secondes
     keepAwakeTimerRef.current = setInterval(() => {
-      if (Platform.OS !== 'web') {
+      if (Platform.OS !== 'web' && keepAwakeActive) {
         console.log('Refreshing keep awake mode to prevent screen timeout');
-        // Réactiver le mode anti-veille
         activateKeepAwake();
-        setKeepAwakeActive(true);
       }
     }, 30000);
   };
   
-  // Fonction pour arrêter le timer de rafraîchissement du mode anti-veille
-  const stopKeepAwakeRefreshTimer = () => {
-    if (keepAwakeTimerRef.current) {
-      clearInterval(keepAwakeTimerRef.current);
-      keepAwakeTimerRef.current = null;
+  // Fonction pour basculer le mode anti-veille
+  const toggleKeepAwake = () => {
+    if (Platform.OS === 'web') return;
+    
+    const newState = !keepAwakeActive;
+    setKeepAwakeActive(newState);
+    
+    if (newState) {
+      console.log('Activating keep awake mode');
+      activateKeepAwake();
+      startKeepAwakeTimer();
+    } else {
+      console.log('Deactivating keep awake mode');
+      deactivateKeepAwake();
+      if (keepAwakeTimerRef.current) {
+        clearInterval(keepAwakeTimerRef.current);
+        keepAwakeTimerRef.current = null;
+      }
     }
+    
+    Alert.alert(
+      newState ? 'Mode anti-veille activé' : 'Mode anti-veille désactivé',
+      newState 
+        ? 'L\'écran restera allumé en permanence.' 
+        : 'L\'écran pourra se mettre en veille selon les paramètres du système.',
+      [{ text: 'OK' }]
+    );
   };
 
   const initializeApp = async () => {
@@ -611,9 +631,9 @@ export default function HomeScreen() {
             ✓ Surveillance des présentations par défaut active
           </Text>
         )}
-        {keepAwakeActive && Platform.OS !== 'web' && (
-          <Text style={styles.keepAwakeStatus}>
-            ✓ Mode anti-veille actif (écran toujours allumé)
+        {Platform.OS !== 'web' && (
+          <Text style={[styles.assignmentStatus, { color: keepAwakeActive ? '#10b981' : '#ef4444' }]}>
+            {keepAwakeActive ? '✓ Mode anti-veille actif' : '✗ Mode anti-veille désactivé'}
           </Text>
         )}
       </TouchableOpacity>
@@ -656,16 +676,26 @@ export default function HomeScreen() {
           </View>
         )}
         
-        <Text style={styles.deviceId}>
-          ID: {apiService.getDeviceId()}
-        </Text>
-        
-        {keepAwakeActive && Platform.OS !== 'web' && (
-          <View style={styles.keepAwakeIndicator}>
-            <Clock size={14} color="#10b981" />
-            <Text style={styles.keepAwakeText}>Mode anti-veille actif</Text>
-          </View>
-        )}
+        <View style={styles.deviceControls}>
+          <Text style={styles.deviceId}>
+            ID: {apiService.getDeviceId()}
+          </Text>
+          
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity 
+              style={[
+                styles.keepAwakeButton, 
+                { backgroundColor: keepAwakeActive ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)' }
+              ]}
+              onPress={toggleKeepAwake}
+            >
+              <Moon size={16} color={keepAwakeActive ? '#10b981' : '#ef4444'} />
+              <Text style={[styles.keepAwakeText, { color: keepAwakeActive ? '#10b981' : '#ef4444' }]}>
+                {keepAwakeActive ? 'Anti-veille actif' : 'Anti-veille inactif'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
   };
@@ -904,9 +934,6 @@ export default function HomeScreen() {
           <RefreshCw size={48} color="#ffffff" />
           <Text style={styles.loadingText}>Initialisation de l'application...</Text>
           <Text style={styles.loadingSubtext}>Vérification des assignations...</Text>
-          {Platform.OS !== 'web' && (
-            <Text style={styles.loadingSubtext}>Mode anti-veille activé</Text>
-          )}
         </LinearGradient>
       </View>
     );
@@ -955,6 +982,33 @@ export default function HomeScreen() {
                     {refreshing ? 'Actualisation...' : 'Actualiser'}
                   </Text>
                 </TouchableOpacity>
+                
+                {/* Bouton pour activer/désactiver le mode anti-veille */}
+                {Platform.OS !== 'web' && (
+                  <TouchableOpacity
+                    style={[
+                      styles.keepAwakeButton,
+                      { backgroundColor: keepAwakeActive ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)' },
+                      focusedIndex === -4 && styles.focusedRefreshButton
+                    ]}
+                    onPress={toggleKeepAwake}
+                    accessible={true}
+                    accessibilityLabel={keepAwakeActive ? "Désactiver le mode anti-veille" : "Activer le mode anti-veille"}
+                    accessibilityRole="button"
+                    onFocus={() => setFocusedIndex(-4)}
+                  >
+                    <Moon 
+                      size={20} 
+                      color={keepAwakeActive ? "#10b981" : "#ef4444"} 
+                    />
+                    <Text style={[
+                      styles.refreshButtonText,
+                      { color: keepAwakeActive ? "#ffffff" : "#ffffff" }
+                    ]}>
+                      {keepAwakeActive ? 'Anti-veille actif' : 'Anti-veille inactif'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -972,7 +1026,7 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.sectionSubtitle}>
               🔄 Lecture automatique en boucle activée • 📡 Contrôle à distance
-              {Platform.OS !== 'web' && ' • 🔒 Mode anti-veille actif'}
+              {Platform.OS !== 'web' && keepAwakeActive && ' • 🌙 Anti-veille actif'}
             </Text>
           </View>
           
@@ -1070,7 +1124,7 @@ export default function HomeScreen() {
               {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
               {'\n'}Mode: Lecture automatique en boucle
               {'\n'}Contrôle à distance: Activé
-              {Platform.OS !== 'web' && '\n'}Mode anti-veille: Activé (écran toujours allumé)
+              {Platform.OS !== 'web' && `\n'}Anti-veille: ${keepAwakeActive ? 'Activé' : 'Désactivé'}`}
               {defaultPresentation && '\n'}Présentation par défaut: Configurée
               {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
             </Text>
@@ -1154,6 +1208,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  keepAwakeButton: {
+    borderRadius: 25,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  keepAwakeText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   focusedRefreshButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.4)',
     borderWidth: 4,
@@ -1229,12 +1296,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
-  keepAwakeStatus: {
-    fontSize: 12,
-    color: '#3b82f6',
-    fontWeight: '600',
-    marginTop: 4,
-  },
   currentPresentationInfo: {
     marginTop: 8,
     padding: 8,
@@ -1257,20 +1318,11 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     marginTop: 4,
   },
-  keepAwakeIndicator: {
+  deviceControls: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
     marginTop: 8,
-    alignSelf: 'flex-start',
-  },
-  keepAwakeText: {
-    fontSize: 12,
-    color: '#10b981',
-    marginLeft: 4,
   },
   assignedSection: {
     paddingHorizontal: 20,
