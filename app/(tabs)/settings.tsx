@@ -1027,7 +1027,7 @@ export default function SettingsScreen() {
             • L'application est configurée pour accepter les connexions non sécurisées{`\n\n`}
             
             <Text style={styles.helpBold}>4. Mode anti-veille :</Text>{`\n`}
-            • Activé par défaut pour empêcher l'écran de s'éteindre{`\n`}
+            • Activé par défaut pour empêcher l'écran de s\'éteindre{`\n`}
             • Fonctionne même en arrière-plan{`\n`}
             • Peut être désactivé dans les paramètres avancés{`\n\n`}
             
