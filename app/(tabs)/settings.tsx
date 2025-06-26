@@ -26,11 +26,13 @@ import {
   Activity, 
   Zap,
   Play,
-  Pause
+  Pause,
+  Moon
 } from 'lucide-react-native';
 import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { activateKeepAwake, deactivateKeepAwake, useKeepAwake } from 'expo-keep-awake';
 
 // Définition des clés de stockage pour éviter les erreurs
 const STORAGE_KEYS = {
@@ -40,6 +42,7 @@ const STORAGE_KEYS = {
   ENROLLMENT_TOKEN: 'enrollment_token',
   ASSIGNED_PRESENTATION: 'assigned_presentation',
   DEFAULT_PRESENTATION: 'default_presentation',
+  KEEP_AWAKE_ENABLED: 'keep_awake_enabled',
 };
 
 // Import conditionnel de TVEventHandler
@@ -71,6 +74,14 @@ export default function SettingsScreen() {
   const [memoryOptimizationEnabled, setMemoryOptimizationEnabled] = useState(true);
   const [deviceStatus, setDeviceStatus] = useState<string>('online');
   const [connectionError, setConnectionError] = useState<string>('');
+  
+  // État pour le mode anti-veille
+  const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
+  
+  // Utiliser le hook useKeepAwake si activé
+  if (keepAwakeEnabled && Platform.OS !== 'web') {
+    useKeepAwake();
+  }
 
   useEffect(() => {
     loadCurrentSettings();
@@ -133,7 +144,7 @@ export default function SettingsScreen() {
   };
 
   const handleNavigateDown = () => {
-    const maxIndex = 10; // Ajusté pour inclure les nouveaux paramètres
+    const maxIndex = 11; // Ajusté pour inclure les nouveaux paramètres
     if (focusedIndex < maxIndex) {
       setFocusedIndex(focusedIndex + 1);
     }
@@ -182,6 +193,9 @@ export default function SettingsScreen() {
       case 10:
         setMemoryOptimizationEnabled(!memoryOptimizationEnabled);
         break;
+      case 11:
+        toggleKeepAwake();
+        break;
     }
   };
 
@@ -216,11 +230,13 @@ export default function SettingsScreen() {
       const statusReporting = await AsyncStorage.getItem('settings_status_reporting');
       const autoRestart = await AsyncStorage.getItem('settings_auto_restart');
       const memoryOptimization = await AsyncStorage.getItem('settings_memory_optimization');
+      const keepAwake = await AsyncStorage.getItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED);
       
       setRemoteControlEnabled(remoteControl !== 'false');
       setStatusReportingEnabled(statusReporting !== 'false');
       setAutoRestartEnabled(autoRestart !== 'false');
       setMemoryOptimizationEnabled(memoryOptimization !== 'false');
+      setKeepAwakeEnabled(keepAwake !== 'false');
     } catch (error) {
       console.error('Error loading advanced settings:', error);
     }
@@ -232,6 +248,16 @@ export default function SettingsScreen() {
       await AsyncStorage.setItem('settings_status_reporting', statusReportingEnabled.toString());
       await AsyncStorage.setItem('settings_auto_restart', autoRestartEnabled.toString());
       await AsyncStorage.setItem('settings_memory_optimization', memoryOptimizationEnabled.toString());
+      await AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, keepAwakeEnabled.toString());
+      
+      // Appliquer le paramètre de veille immédiatement
+      if (Platform.OS !== 'web') {
+        if (keepAwakeEnabled) {
+          activateKeepAwake();
+        } else {
+          deactivateKeepAwake();
+        }
+      }
       
       Alert.alert(
         'Paramètres avancés sauvegardés',
@@ -246,6 +272,25 @@ export default function SettingsScreen() {
         [{ text: 'OK' }]
       );
     }
+  };
+
+  // Fonction pour activer/désactiver le mode anti-veille
+  const toggleKeepAwake = () => {
+    const newValue = !keepAwakeEnabled;
+    setKeepAwakeEnabled(newValue);
+    
+    if (Platform.OS !== 'web') {
+      if (newValue) {
+        activateKeepAwake();
+        console.log('Keep awake mode activated');
+      } else {
+        deactivateKeepAwake();
+        console.log('Keep awake mode deactivated');
+      }
+    }
+    
+    // Sauvegarder le paramètre
+    AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, newValue.toString());
   };
 
   const testConnection = async (url: string) => {
@@ -273,9 +318,11 @@ export default function SettingsScreen() {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'User-Agent': 'PresentationKiosk/2.0 (FireTV)',
+          'User-Agent': 'PresentationKiosk/2.0 (FireTV; OVH-Compatible)',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
+          'Accept-Encoding': 'gzip, deflate',
+          'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
         },
       });
       
@@ -571,7 +618,7 @@ export default function SettingsScreen() {
               ]}
               value={serverUrl}
               onChangeText={setServerUrl}
-              placeholder="http://192.168.18.28/mods/livetv/api"
+              placeholder="http://votre-domaine.fr/mods/livetv/api"
               placeholderTextColor="#6b7280"
               autoCapitalize="none"
               autoCorrect={false}
@@ -769,6 +816,16 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 
+                <View style={styles.infoRow}>
+                  <Moon size={20} color={keepAwakeEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Mode anti-veille</Text>
+                    <Text style={styles.infoValue}>
+                      {keepAwakeEnabled ? 'Activé' : 'Désactivé'}
+                    </Text>
+                  </View>
+                </View>
+                
                 {debugInfo.connectionAttempts > 0 && (
                   <View style={styles.infoRow}>
                     <AlertCircle size={20} color={debugInfo.connectionAttempts > 3 ? "#ef4444" : "#f59e0b"} />
@@ -915,6 +972,30 @@ export default function SettingsScreen() {
                 />
               </View>
               
+              <View style={styles.settingRow}>
+                <View style={styles.settingLabelContainer}>
+                  <Moon size={20} color={keepAwakeEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.settingTextContainer}>
+                    <Text style={styles.settingLabel}>Mode anti-veille</Text>
+                    <Text style={styles.settingDescription}>
+                      Empêche l'écran de s'éteindre automatiquement
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={keepAwakeEnabled}
+                  onValueChange={toggleKeepAwake}
+                  trackColor={{ false: '#6b7280', true: '#10b981' }}
+                  thumbColor={keepAwakeEnabled ? '#ffffff' : '#f4f3f4'}
+                  ios_backgroundColor="#6b7280"
+                  style={[
+                    styles.settingSwitch,
+                    focusedIndex === 11 && styles.focusedSwitch
+                  ]}
+                  onFocus={() => setFocusedIndex(11)}
+                />
+              </View>
+              
               <TouchableOpacity
                 style={styles.saveAdvancedButton}
                 onPress={saveAdvancedSettings}
@@ -929,37 +1010,32 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.helpSection}>
-          <Text style={styles.helpTitle}>Guide de configuration Enhanced</Text>
+          <Text style={styles.helpTitle}>Guide de configuration OVH</Text>
           <Text style={styles.helpText}>
-            <Text style={styles.helpBold}>1. URL du serveur :</Text>{`\n`}
-            Entrez l'URL de base de votre API (sans /index.php){`\n`}
-            Exemple: http://192.168.18.28/mods/livetv/api{`\n\n`}
+            <Text style={styles.helpBold}>1. URL du serveur OVH :</Text>{`\n`}
+            Entrez l'URL complète de votre API hébergée chez OVH{`\n`}
+            Exemple: http://votre-domaine.fr/mods/livetv/api{`\n\n`}
             
-            <Text style={styles.helpBold}>2. Test de connexion :</Text>{`\n`}
-            • Testez toujours avant de sauvegarder{`\n`}
-            • Vérifiez que le serveur répond correctement{`\n`}
-            • Le test valide la version de l'API{`\n\n`}
+            <Text style={styles.helpBold}>2. Problèmes de connexion OVH :</Text>{`\n`}
+            • Vérifiez que votre serveur OVH autorise les requêtes HTTP{`\n`}
+            • Assurez-vous que le pare-feu OVH n'est pas trop restrictif{`\n`}
+            • Vérifiez que PHP est correctement configuré sur OVH{`\n\n`}
             
-            <Text style={styles.helpBold}>3. Enregistrement :</Text>{`\n`}
-            • L'enregistrement se fait automatiquement lors de la sauvegarde{`\n`}
-            • Utilisez le bouton manuel si l'automatique échoue{`\n`}
-            • Un appareil déjà enregistré peut être forcé à se réenregistrer{`\n\n`}
+            <Text style={styles.helpBold}>3. Certificats SSL :</Text>{`\n`}
+            • Si vous utilisez HTTPS, assurez-vous que votre certificat est valide{`\n`}
+            • Pour les tests, utilisez HTTP plutôt que HTTPS{`\n`}
+            • L'application est configurée pour accepter les connexions non sécurisées{`\n\n`}
             
-            <Text style={styles.helpBold}>4. Surveillance :</Text>{`\n`}
-            • Assignations: Présentations assignées spécifiquement{`\n`}
-            • Par défaut: Présentation par défaut de l'appareil{`\n`}
-            • Les deux surveillances fonctionnent en parallèle{`\n\n`}
+            <Text style={styles.helpBold}>4. Mode anti-veille :</Text>{`\n`}
+            • Activé par défaut pour empêcher l'écran de s'éteindre{`\n`}
+            • Fonctionne même en arrière-plan{`\n`}
+            • Peut être désactivé dans les paramètres avancés{`\n\n`}
             
-            <Text style={styles.helpBold}>5. Contrôle à distance :</Text>{`\n`}
-            • Permet de contrôler l'appareil depuis la plateforme web{`\n`}
-            • Statut en temps réel visible sur le serveur{`\n`}
-            • Commandes: lecture, pause, redémarrage, etc.{`\n\n`}
-            
-            <Text style={styles.helpBold}>6. En cas de problème :</Text>{`\n`}
-            • Vérifiez que l'appareil et le serveur sont sur le même réseau{`\n`}
+            <Text style={styles.helpBold}>5. En cas de problème avec OVH :</Text>{`\n`}
+            • Vérifiez les logs PHP sur votre hébergement OVH{`\n`}
             • Testez l'URL dans un navigateur web{`\n`}
-            • Utilisez le bouton d'enregistrement manuel{`\n`}
-            • Consultez les logs PHP de votre serveur
+            • Assurez-vous que les fichiers PHP ont les bonnes permissions{`\n`}
+            • Vérifiez la configuration .htaccess si vous en utilisez un
           </Text>
         </View>
       </ScrollView>

@@ -25,13 +25,18 @@ import {
   CircleAlert as AlertCircle, 
   RefreshCw, 
   RotateCcw, 
-  Repeat 
+  Repeat,
+  Moon
 } from 'lucide-react-native';
 import { apiService, PresentationDetails, Slide } from '@/services/ApiService';
 import { statusService, RemoteCommand } from '@/services/StatusService';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
+
+// Clé de stockage pour le mode anti-veille
+const KEEP_AWAKE_ENABLED_KEY = 'keep_awake_enabled';
 
 // Import conditionnel de TVEventHandler avec gestion d'erreur robuste
 let TVEventHandler: any = null;
@@ -57,6 +62,7 @@ export default function PresentationScreen() {
   const [loopCount, setLoopCount] = useState(0);
   const [focusedControlIndex, setFocusedControlIndex] = useState(1);
   const [memoryOptimization, setMemoryOptimization] = useState(false);
+  const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
   
   // Refs pour la gestion des timers et événements
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -140,15 +146,55 @@ export default function PresentationScreen() {
     
     // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
     keepScreenAwakeRef.current = setInterval(() => {
-      if (Platform.OS !== 'web') {
+      if (Platform.OS !== 'web' && keepAwakeEnabled) {
         console.log('Refreshing keep awake mode to prevent screen timeout');
         // Réactiver le mode anti-veille
         activateKeepAwake();
       }
     }, 30000);
-  }, []);
+  }, [keepAwakeEnabled]);
+
+  // Charger le paramètre de mode anti-veille
+  const loadKeepAwakeSetting = async () => {
+    try {
+      const value = await AsyncStorage.getItem(KEEP_AWAKE_ENABLED_KEY);
+      // Si la valeur n'existe pas, on garde true par défaut
+      if (value !== null) {
+        setKeepAwakeEnabled(value !== 'false');
+      }
+    } catch (error) {
+      console.error('Error loading keep awake setting:', error);
+    }
+  };
+
+  // Fonction pour activer/désactiver le mode anti-veille
+  const toggleKeepAwake = () => {
+    const newValue = !keepAwakeEnabled;
+    setKeepAwakeEnabled(newValue);
+    
+    if (Platform.OS !== 'web') {
+      if (newValue) {
+        activateKeepAwake();
+        console.log('Keep awake mode activated');
+        startKeepAwakeTimer();
+      } else {
+        deactivateKeepAwake();
+        console.log('Keep awake mode deactivated');
+        if (keepScreenAwakeRef.current) {
+          clearInterval(keepScreenAwakeRef.current);
+          keepScreenAwakeRef.current = null;
+        }
+      }
+    }
+    
+    // Sauvegarder le paramètre
+    AsyncStorage.setItem(KEEP_AWAKE_ENABLED_KEY, newValue.toString());
+  };
 
   useEffect(() => {
+    // Charger le paramètre de mode anti-veille
+    loadKeepAwakeSetting();
+    
     // Activer le mode anti-veille spécifiquement pour cette page
     if (Platform.OS !== 'web') {
       console.log('Activating keep awake mode for presentation screen');
@@ -832,6 +878,13 @@ export default function PresentationScreen() {
             <Text style={styles.optimizationText}>OPTIMISÉ</Text>
           </View>
         )}
+        
+        {keepAwakeEnabled && (
+          <View style={styles.keepAwakeIndicator}>
+            <Moon size={16} color="#ffffff" />
+            <Text style={styles.keepAwakeText}>ANTI-VEILLE</Text>
+          </View>
+        )}
       </TouchableOpacity>
 
       {showControls && (
@@ -973,6 +1026,22 @@ export default function PresentationScreen() {
                 >
                   <Repeat size={20} color="#ffffff" />
                 </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[
+                    styles.controlButton, 
+                    styles.smallButton, 
+                    keepAwakeEnabled && styles.activeButton,
+                    focusedControlIndex === 5 && styles.focusedControl
+                  ]}
+                  onPress={toggleKeepAwake}
+                  accessible={true}
+                  accessibilityLabel={keepAwakeEnabled ? "Désactiver le mode anti-veille" : "Activer le mode anti-veille"}
+                  accessibilityRole="button"
+                  onFocus={() => setFocusedControlIndex(5)}
+                >
+                  <Moon size={20} color="#ffffff" />
+                </TouchableOpacity>
               </View>
 
               <View style={styles.thumbnailContainer}>
@@ -982,13 +1051,13 @@ export default function PresentationScreen() {
                     style={[
                       styles.thumbnail,
                       index === currentSlideIndex && styles.activeThumbnail,
-                      focusedControlIndex === 5 + index && styles.focusedThumbnail,
+                      focusedControlIndex === 6 + index && styles.focusedThumbnail,
                     ]}
                     onPress={() => goToSlide(index)}
                     accessible={true}
                     accessibilityLabel={`Aller à la slide ${index + 1}`}
                     accessibilityRole="button"
-                    onFocus={() => setFocusedControlIndex(5 + index)}
+                    onFocus={() => setFocusedControlIndex(6 + index)}
                   >
                     <View style={styles.thumbnailNumber}>
                       <Text style={styles.thumbnailNumberText}>{index + 1}</Text>
@@ -1215,6 +1284,23 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   optimizationText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  keepAwakeIndicator: {
+    position: 'absolute',
+    top: 170,
+    left: 20,
+    backgroundColor: 'rgba(59, 130, 246, 0.9)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  keepAwakeText: {
     color: '#ffffff',
     fontSize: 12,
     fontWeight: 'bold',

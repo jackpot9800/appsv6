@@ -770,20 +770,21 @@ class ApiService {
   }
 
   /**
-   * Effectue une requête avec timeout manuel et configuration réseau améliorée pour APK
+   * Effectue une requête avec timeout manuel et configuration réseau améliorée pour serveurs OVH
    */
-  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = 30000): Promise<Response> {
-    // Configuration spéciale pour APK compilée
+  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = 45000): Promise<Response> {
+    // Configuration spéciale pour serveurs OVH et Android
     const enhancedOptions: RequestInit = {
       ...options,
-      // Forcer l'utilisation de HTTP/1.1 pour éviter les problèmes de certificats
-      // et améliorer la compatibilité avec les serveurs PHP
       headers: {
         ...options.headers,
         'Connection': 'keep-alive',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
+        // Headers spécifiques pour OVH
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
       },
     };
 
@@ -811,19 +812,24 @@ class ApiService {
     console.log('Device ID:', this.deviceId);
     console.log('API Type:', this.apiType);
     
-    // Headers améliorés pour APK compilée
+    // Headers améliorés pour serveurs OVH et Android
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0',
-      'User-Agent': 'PresentationKiosk/2.0 (Android; FireTV)',
+      'User-Agent': 'PresentationKiosk/2.0 (Android; FireTV; OVH-Compatible)',
       'X-Device-ID': this.deviceId,
       'X-Device-Type': 'firetv',
       'X-App-Version': '2.0.0',
       'X-Platform': 'android',
       'Connection': 'keep-alive',
+      'Accept-Encoding': 'gzip, deflate',
+      'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+      // Headers spécifiques pour OVH
+      'X-Forwarded-Proto': 'https',
+      'X-Real-IP': 'client',
       ...options.headers,
     };
 
@@ -839,10 +845,11 @@ class ApiService {
       this.connectionAttempts++;
       console.log(`Connection attempt #${this.connectionAttempts} to ${url}`);
       
+      // Augmenter le timeout pour les serveurs OVH (qui peuvent être plus lents)
       const response = await this.fetchWithTimeout(url, {
         ...options,
         headers,
-      }, 30000);
+      }, 45000); // 45 secondes de timeout pour OVH
 
       console.log('=== API RESPONSE ===');
       console.log('Status:', response.status, response.statusText);
@@ -895,9 +902,9 @@ class ApiService {
         this.lastConnectionError = error.message;
         
         if (error.message.includes('Timeout après')) {
-          throw new Error(`Timeout de connexion: ${url}`);
+          throw new Error(`Timeout de connexion: ${url}\n\nLe serveur OVH n'a pas répondu dans le délai imparti. Vérifiez que votre serveur est correctement configuré et qu'il n'y a pas de restrictions de pare-feu.`);
         } else if (error.message.includes('fetch') || error.message.includes('Network')) {
-          throw new Error(`Impossible de se connecter au serveur: ${url}\n\nVérifiez que votre appareil est connecté au même réseau que le serveur.`);
+          throw new Error(`Impossible de se connecter au serveur: ${url}\n\nVérifiez que votre appareil est connecté au même réseau que le serveur et que le serveur OVH est accessible depuis l'extérieur.`);
         }
       } else {
         this.lastConnectionError = "Erreur inconnue";
@@ -978,7 +985,7 @@ class ApiService {
         name: `Fire TV Stick - ${this.deviceId.split('_').pop()}`,
         type: 'firetv',
         platform: 'android',
-        user_agent: 'PresentationKiosk/2.0 (Android; FireTV)',
+        user_agent: 'PresentationKiosk/2.0 (Android; FireTV; OVH-Compatible)',
         capabilities: [
           'video_playback',
           'image_display',
