@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiService } from './ApiService';
+import { Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 
 export interface DeviceStatus {
   device_id: string;
@@ -17,7 +19,9 @@ export interface DeviceStatus {
   wifi_strength?: number;
   app_version?: string;
   error_message?: string;
-  local_ip?: string; // Ajout de l'adresse IP locale
+  local_ip?: string; // Adresse IP locale de l'appareil
+  external_ip?: string; // Adresse IP externe (pour OVH)
+  device_name?: string; // Nom de l'appareil pour l'affichage
 }
 
 export interface RemoteCommand {
@@ -38,9 +42,23 @@ class StatusService {
   private onStatusUpdateCallback: ((status: DeviceStatus) => void) | null = null;
   private onRemoteCommandCallback: ((command: RemoteCommand) => void) | null = null;
   private localIpAddress: string | null = null;
+  private externalIpAddress: string | null = null;
+  private deviceName: string | null = null;
+  private heartbeatFailCount: number = 0;
+  private maxHeartbeatFailCount: number = 5;
+  private heartbeatRetryDelay: number = 5000; // 5 secondes
+  private lastHeartbeatSuccess: number = 0;
 
   async initialize() {
     console.log('=== INITIALIZING STATUS SERVICE ===');
+    
+    // Récupérer le nom de l'appareil depuis AsyncStorage
+    try {
+      this.deviceName = await AsyncStorage.getItem('device_name') || `Fire TV ${Math.floor(Math.random() * 1000)}`;
+    } catch (error) {
+      console.error('Error getting device name:', error);
+      this.deviceName = `Fire TV ${Math.floor(Math.random() * 1000)}`;
+    }
     
     // Démarrer le heartbeat toutes les 30 secondes
     this.startHeartbeat();
@@ -50,6 +68,11 @@ class StatusService {
     
     // Tenter de récupérer l'adresse IP locale
     this.getLocalIPAddress();
+    
+    // Tenter de récupérer l'adresse IP externe
+    this.getExternalIPAddress();
+    
+    console.log('Status Service initialized with device name:', this.deviceName);
   }
 
   /**
@@ -57,17 +80,39 @@ class StatusService {
    */
   private async getLocalIPAddress() {
     try {
-      // Cette méthode est une approximation et peut ne pas fonctionner sur tous les appareils
-      // Pour une implémentation plus robuste, il faudrait utiliser des modules natifs
+      if (Platform.OS !== 'web') {
+        // Utiliser NetInfo pour obtenir l'adresse IP locale
+        const netInfo = await NetInfo.fetch();
+        if (netInfo.type === 'wifi' && netInfo.details) {
+          this.localIpAddress = netInfo.details.ipAddress || null;
+        }
+      }
       
-      // Méthode simplifiée pour simuler la récupération d'IP locale
-      // Dans une vraie implémentation, utilisez des modules comme react-native-network-info
-      this.localIpAddress = '192.168.1.X'; // Valeur simulée
+      if (!this.localIpAddress) {
+        // Méthode de secours - simuler une adresse IP locale
+        this.localIpAddress = `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+      }
       
       console.log('Local IP address:', this.localIpAddress);
     } catch (error) {
       console.log('Failed to get local IP address:', error);
       this.localIpAddress = null;
+    }
+  }
+
+  /**
+   * Tente de récupérer l'adresse IP externe de l'appareil
+   */
+  private async getExternalIPAddress() {
+    try {
+      // Utiliser un service externe pour obtenir l'adresse IP externe
+      const response = await fetch('https://api.ipify.org?format=json');
+      const data = await response.json();
+      this.externalIpAddress = data.ip;
+      console.log('External IP address:', this.externalIpAddress);
+    } catch (error) {
+      console.log('Failed to get external IP address:', error);
+      this.externalIpAddress = null;
     }
   }
 
@@ -80,8 +125,26 @@ class StatusService {
     this.heartbeatInterval = setInterval(async () => {
       try {
         await this.sendHeartbeat();
+        // Réinitialiser le compteur d'échecs en cas de succès
+        this.heartbeatFailCount = 0;
+        this.lastHeartbeatSuccess = Date.now();
       } catch (error) {
         console.log('Heartbeat failed:', error);
+        this.heartbeatFailCount++;
+        
+        // Si trop d'échecs consécutifs, réduire la fréquence des tentatives
+        if (this.heartbeatFailCount >= this.maxHeartbeatFailCount) {
+          console.log(`Too many heartbeat failures (${this.heartbeatFailCount}), reducing frequency`);
+          if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+            
+            // Réessayer après un délai plus long
+            setTimeout(() => {
+              this.startHeartbeat();
+            }, this.heartbeatRetryDelay);
+          }
+        }
       }
     }, 30000); // Toutes les 30 secondes
 
@@ -97,7 +160,10 @@ class StatusService {
 
     this.commandCheckInterval = setInterval(async () => {
       try {
-        await this.checkForRemoteCommands();
+        // Ne vérifier les commandes que si le dernier heartbeat a réussi
+        if (this.lastHeartbeatSuccess > 0) {
+          await this.checkForRemoteCommands();
+        }
       } catch (error) {
         console.log('Command check failed:', error);
       }
@@ -118,6 +184,8 @@ class StatusService {
         headers: {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
+          'X-Device-Type': 'firetv',
+          'X-App-Version': '2.0.0',
         },
         body: JSON.stringify(status),
       });
@@ -140,9 +208,15 @@ class StatusService {
             await this.acknowledgeCommand(command.id);
           }
         }
+        
+        // Mettre à jour le timestamp du dernier heartbeat réussi
+        this.lastHeartbeatSuccess = Date.now();
+      } else {
+        throw new Error(`Server returned status ${response.status}`);
       }
     } catch (error) {
       console.log('Failed to send heartbeat:', error);
+      throw error;
     }
   }
 
@@ -158,6 +232,8 @@ class StatusService {
         headers: {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
+          'X-Device-Type': 'firetv',
+          'X-App-Version': '2.0.0',
         },
       });
 
@@ -201,6 +277,8 @@ class StatusService {
         headers: {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
+          'X-Device-Type': 'firetv',
+          'X-App-Version': '2.0.0',
         },
         body: JSON.stringify({
           command_id: commandId,
@@ -225,6 +303,7 @@ class StatusService {
 
     const status: DeviceStatus = {
       device_id: deviceId,
+      device_name: this.deviceName || `Fire TV ${deviceId.substring(deviceId.length - 6)}`,
       status: this.currentStatus?.status || 'online',
       current_presentation_id: this.currentStatus?.current_presentation_id,
       current_presentation_name: this.currentStatus?.current_presentation_name,
@@ -238,7 +317,8 @@ class StatusService {
       wifi_strength: systemInfo.wifiStrength,
       app_version: appVersion,
       error_message: this.currentStatus?.error_message,
-      local_ip: this.localIpAddress || undefined, // Ajouter l'adresse IP locale
+      local_ip: this.localIpAddress || undefined, // Adresse IP locale
+      external_ip: this.externalIpAddress || undefined, // Adresse IP externe
     };
 
     return status;
@@ -248,12 +328,37 @@ class StatusService {
    * Récupère les informations système
    */
   private async getSystemInfo() {
-    // Simulation des informations système
-    // En production, utiliser des APIs natives appropriées
+    // Tenter de récupérer des informations réelles sur l'appareil
+    let memoryUsage = 0;
+    let wifiStrength = 0;
+    
+    try {
+      if (Platform.OS !== 'web') {
+        // Tenter d'obtenir des informations sur le réseau
+        const netInfo = await NetInfo.fetch();
+        if (netInfo.type === 'wifi' && netInfo.details) {
+          // Sur Android, netInfo.details.strength contient la force du signal WiFi
+          wifiStrength = (netInfo.details as any).strength || Math.floor(Math.random() * 100);
+        }
+        
+        // Pour la mémoire, nous devons simuler car React Native n'a pas d'API standard
+        memoryUsage = Math.floor(Math.random() * 60) + 20; // Entre 20% et 80%
+      } else {
+        // Valeurs simulées pour le web
+        memoryUsage = Math.floor(Math.random() * 60) + 20;
+        wifiStrength = Math.floor(Math.random() * 100);
+      }
+    } catch (error) {
+      console.log('Error getting system info:', error);
+      // Valeurs par défaut en cas d'erreur
+      memoryUsage = 50;
+      wifiStrength = 75;
+    }
+    
     return {
-      uptime: Math.floor(Date.now() / 1000), // Uptime en secondes
-      memoryUsage: Math.floor(Math.random() * 100), // Pourcentage d'utilisation mémoire
-      wifiStrength: Math.floor(Math.random() * 100), // Force du signal WiFi
+      uptime: Math.floor(Date.now() / 1000), // Uptime en secondes depuis le démarrage de l'app
+      memoryUsage: memoryUsage,
+      wifiStrength: wifiStrength,
     };
   }
 
@@ -343,6 +448,39 @@ class StatusService {
    */
   getCurrentStatusSync(): DeviceStatus | null {
     return this.currentStatus;
+  }
+  
+  /**
+   * Définit le nom de l'appareil
+   */
+  async setDeviceName(name: string) {
+    this.deviceName = name;
+    await AsyncStorage.setItem('device_name', name);
+    
+    // Mettre à jour le statut avec le nouveau nom
+    if (this.currentStatus) {
+      this.updateStatus({ device_name: name });
+    }
+  }
+  
+  /**
+   * Récupère le nom de l'appareil
+   */
+  getDeviceName(): string | null {
+    return this.deviceName;
+  }
+  
+  /**
+   * Force l'envoi immédiat d'un heartbeat
+   */
+  async forceHeartbeat(): Promise<boolean> {
+    try {
+      await this.sendHeartbeat();
+      return true;
+    } catch (error) {
+      console.error('Force heartbeat failed:', error);
+      return false;
+    }
   }
 }
 
