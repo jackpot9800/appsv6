@@ -19,15 +19,19 @@ echo "<li>Heure PHP UTC: " . gmdate('Y-m-d H:i:s') . "</li>";
 echo "</ul>";
 
 echo "<h2>Informations MySQL</h2>";
-$stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");
-$tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
+try {
+    $stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");
+    $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
 
-echo "<ul>";
-echo "<li>Fuseau horaire MySQL global: " . $tzInfo['global_tz'] . "</li>";
-echo "<li>Fuseau horaire MySQL session: " . $tzInfo['session_tz'] . "</li>";
-echo "<li>Heure MySQL actuelle: " . $tzInfo['mysql_now'] . "</li>";
-echo "<li>Heure MySQL UTC: " . $tzInfo['mysql_utc'] . "</li>";
-echo "</ul>";
+    echo "<ul>";
+    echo "<li>Fuseau horaire MySQL global: " . $tzInfo['global_tz'] . "</li>";
+    echo "<li>Fuseau horaire MySQL session: " . $tzInfo['session_tz'] . "</li>";
+    echo "<li>Heure MySQL actuelle: " . $tzInfo['mysql_now'] . "</li>";
+    echo "<li>Heure MySQL UTC: " . $tzInfo['mysql_utc'] . "</li>";
+    echo "</ul>";
+} catch (Exception $e) {
+    echo "<p style='color: red;'>Erreur MySQL: " . $e->getMessage() . "</p>";
+}
 
 echo "<h2>Test de conversion</h2>";
 $localTime = date('Y-m-d H:i:s');

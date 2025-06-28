@@ -23,7 +23,7 @@ if (!in_array($timezone, $validTimezones)) {
 
 try {
     // Mettre à jour le fuseau horaire de la session MySQL
-    $dbpdointranet->exec("SET time_zone = '" . $timezone . "'");
+    $dbpdointranet->exec("SET time_zone = '" . date('P') . "'");
     
     // Vérifier que le changement a été appliqué
     $stmt = $dbpdointranet->query("SELECT @@session.time_zone, NOW()");
@@ -167,11 +167,17 @@ try {
                 <li><strong>Heure PHP locale :</strong> <?= date('Y-m-d H:i:s') ?></li>
                 <li><strong>Heure PHP UTC :</strong> <?= gmdate('Y-m-d H:i:s') ?></li>
                 <?php
-                $stmt = $dbpdointranet->query("SELECT @@session.time_zone, NOW()");
-                $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
+                try {
+                    $stmt = $dbpdointranet->query("SELECT @@session.time_zone, NOW()");
+                    $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
+                    ?>
+                    <li><strong>Fuseau horaire MySQL :</strong> <?= $tzInfo['@@session.time_zone'] ?></li>
+                    <li><strong>Heure MySQL :</strong> <?= $tzInfo['NOW()'] ?></li>
+                <?php
+                } catch (Exception $e) {
+                    echo "<li><strong>Erreur MySQL :</strong> " . $e->getMessage() . "</li>";
+                }
                 ?>
-                <li><strong>Fuseau horaire MySQL :</strong> <?= $tzInfo['@@session.time_zone'] ?></li>
-                <li><strong>Heure MySQL :</strong> <?= $tzInfo['NOW()'] ?></li>
             </ul>
         </div>
     </div>
