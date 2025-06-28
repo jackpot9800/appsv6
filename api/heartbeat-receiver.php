@@ -54,7 +54,7 @@ if (empty($externalIP)) {
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Erreur de connexion à la base de données: ' . $e->getMessage()]);
@@ -95,7 +95,7 @@ if (!$appareil) {
     $appareilId = $appareil['id'];
 }
 
-// Mettre à jour le statut de l'appareil
+// Mettre à jour le statut de l'appareil avec le fuseau horaire correct
 try {
     // Utiliser NOW() avec le fuseau horaire correct
     $currentTime = date('Y-m-d H:i:s');
@@ -144,14 +144,13 @@ try {
         $deviceId
     ]);
 
-    // Enregistrer un log d'activité - CORRECTION: Ne pas spécifier l'ID pour éviter les conflits de clé primaire
-    $stmt = $dbpdointranet->prepare("
-        INSERT INTO logs_activite 
-        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
-        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?, ?)
-    ");
-    
+    // Enregistrer un log d'activité
     try {
+        $stmt = $dbpdointranet->prepare("
+            INSERT INTO logs_activite 
+            (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+            VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?, ?)
+        ");
         $stmt->execute([
             $appareilId,
             $deviceId,
@@ -168,7 +167,6 @@ try {
         ]);
     } catch (PDOException $e) {
         // Si l'erreur est liée à une clé primaire dupliquée, on l'ignore simplement
-        // mais on continue le traitement pour renvoyer les commandes
         if (strpos($e->getMessage(), 'Duplicate entry') === false) {
             // Si c'est une autre erreur, on la propage
             throw $e;

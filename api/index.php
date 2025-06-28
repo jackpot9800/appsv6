@@ -278,25 +278,33 @@ switch ($path) {
                 }
                 
                 // Insérer un log de connexion
-                $stmt = $dbpdointranet->prepare("
-                    INSERT INTO logs_activite 
-                    (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
-                    VALUES ('connexion', ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([
-                    $appareilId,
-                    $data['device_id'],
-                    "Appareil enregistré avec succès",
-                    json_encode([
-                        'name' => $deviceName,
-                        'type' => $deviceType,
-                        'local_ip' => $localIP,
-                        'external_ip' => $externalIP,
-                        'app_version' => $appVersion
-                    ]),
-                    $ip,
-                    $externalIP
-                ]);
+                try {
+                    $stmt = $dbpdointranet->prepare("
+                        INSERT INTO logs_activite 
+                        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
+                        VALUES ('connexion', ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([
+                        $appareilId,
+                        $data['device_id'],
+                        "Appareil enregistré avec succès",
+                        json_encode([
+                            'name' => $deviceName,
+                            'type' => $deviceType,
+                            'local_ip' => $localIP,
+                            'external_ip' => $externalIP,
+                            'app_version' => $appVersion
+                        ]),
+                        $ip,
+                        $externalIP
+                    ]);
+                } catch (PDOException $e) {
+                    // Si l'erreur est liée à une clé primaire dupliquée, on l'ignore simplement
+                    if (strpos($e->getMessage(), 'Duplicate entry') === false) {
+                        // Si c'est une autre erreur, on la propage
+                        throw $e;
+                    }
+                }
                 
                 logError("Device registered", [
                     'device_id' => $data['device_id'],
@@ -315,121 +323,6 @@ switch ($path) {
             } catch (PDOException $e) {
                 logError("Database error in device registration", ['error' => $e->getMessage()]);
                 jsonResponse(['error' => 'Erreur base de données lors de l\'enregistrement: ' . $e->getMessage()], 500);
-            }
-        } else {
-            jsonResponse(['error' => 'Méthode non autorisée'], 405);
-        }
-        break;
-
-    case 'appareil/heartbeat':
-        if ($method === 'POST') {
-            try {
-                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
-                
-                if (empty($deviceId)) {
-                    jsonResponse(['error' => 'ID appareil requis'], 400);
-                }
-
-                $input = file_get_contents('php://input');
-                $statusData = json_decode($input, true);
-
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    jsonResponse(['error' => 'JSON invalide'], 400);
-                }
-
-                // Récupérer les informations supplémentaires des headers
-                $deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
-                $deviceType = $_SERVER['HTTP_X_DEVICE_TYPE'] ?? 'firetv';
-                $localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
-                $externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
-                $appVersion = $_SERVER['HTTP_X_APP_VERSION'] ?? null;
-                
-                // Si pas d'IP externe dans les headers, utiliser l'IP de la requête
-                if (empty($externalIP)) {
-                    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
-                }
-
-                // Mettre à jour le statut de l'appareil
-                $stmt = $dbpdointranet->prepare("
-                    UPDATE appareils 
-                    SET 
-                        derniere_connexion = NOW(),
-                        statut_temps_reel = ?,
-                        presentation_courante_id = ?,
-                        presentation_courante_nom = ?,
-                        slide_courant_index = ?,
-                        total_slides = ?,
-                        mode_boucle = ?,
-                        lecture_automatique = ?,
-                        uptime_secondes = ?,
-                        utilisation_memoire = ?,
-                        force_wifi = ?,
-                        version_app = ?,
-                        message_erreur = ?,
-                        adresse_ip = ?,
-                        adresse_ip_externe = ?,
-                        adresse_ip_locale = ?,
-                        nom = COALESCE(?, nom)
-                    WHERE identifiant_unique = ?
-                ");
-
-                $stmt->execute([
-                    $statusData['status'] ?? 'online',
-                    $statusData['current_presentation_id'] ?? null,
-                    $statusData['current_presentation_name'] ?? null,
-                    $statusData['current_slide_index'] ?? null,
-                    $statusData['total_slides'] ?? null,
-                    $statusData['is_looping'] ? 1 : 0,
-                    $statusData['auto_play'] ? 1 : 0,
-                    $statusData['uptime_seconds'] ?? null,
-                    $statusData['memory_usage'] ?? null,
-                    $statusData['wifi_strength'] ?? null,
-                    $appVersion ?? $statusData['app_version'] ?? null,
-                    $statusData['error_message'] ?? null,
-                    $_SERVER['REMOTE_ADDR'] ?? '',
-                    $externalIP,
-                    $localIP,
-                    $deviceName,
-                    $deviceId
-                ]);
-
-                // Insérer un log d'activité
-                $stmt = $dbpdointranet->prepare("
-                    INSERT INTO logs_activite 
-                    (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
-                    VALUES ('connexion', ?, 'Heartbeat reçu', ?, ?, ?)
-                ");
-                $stmt->execute([
-                    $deviceId,
-                    json_encode($statusData),
-                    $_SERVER['REMOTE_ADDR'] ?? '',
-                    $externalIP
-                ]);
-
-                // Récupérer les commandes en attente
-                $stmt = $dbpdointranet->prepare("
-                    SELECT * FROM commandes_distantes 
-                    WHERE identifiant_appareil = ? 
-                    AND statut = 'en_attente'
-                    ORDER BY priorite DESC, date_creation ASC
-                    LIMIT 5
-                ");
-                $stmt->execute([$deviceId]);
-                $commandes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-                jsonResponse([
-                    'success' => true, 
-                    'message' => 'Heartbeat reçu',
-                    'server_time' => date('Y-m-d H:i:s'),
-                    'commands' => $commandes,
-                    'device_id' => $deviceId,
-                    'external_ip' => $externalIP,
-                    'local_ip' => $localIP
-                ]);
-
-            } catch (Exception $e) {
-                logError("Erreur heartbeat", ['error' => $e->getMessage()]);
-                jsonResponse(['error' => 'Erreur lors du traitement du heartbeat: ' . $e->getMessage()], 500);
             }
         } else {
             jsonResponse(['error' => 'Méthode non autorisée'], 405);
@@ -548,6 +441,129 @@ switch ($path) {
             } catch (PDOException $e) {
                 logError("Database error in default presentation", ['error' => $e->getMessage()]);
                 jsonResponse(['error' => 'Erreur base de données'], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
+    case 'appareil/heartbeat':
+        if ($method === 'POST') {
+            try {
+                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
+                
+                if (empty($deviceId)) {
+                    jsonResponse(['error' => 'ID appareil requis'], 400);
+                }
+
+                $input = file_get_contents('php://input');
+                $statusData = json_decode($input, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    jsonResponse(['error' => 'JSON invalide'], 400);
+                }
+
+                // Récupérer les informations supplémentaires des headers
+                $deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
+                $deviceType = $_SERVER['HTTP_X_DEVICE_TYPE'] ?? 'firetv';
+                $localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
+                $externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
+                $appVersion = $_SERVER['HTTP_X_APP_VERSION'] ?? null;
+                
+                // Si pas d'IP externe dans les headers, utiliser l'IP de la requête
+                if (empty($externalIP)) {
+                    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
+                }
+
+                // Mettre à jour le statut de l'appareil
+                $stmt = $dbpdointranet->prepare("
+                    UPDATE appareils 
+                    SET 
+                        derniere_connexion = NOW(),
+                        statut_temps_reel = ?,
+                        presentation_courante_id = ?,
+                        presentation_courante_nom = ?,
+                        slide_courant_index = ?,
+                        total_slides = ?,
+                        mode_boucle = ?,
+                        lecture_automatique = ?,
+                        uptime_secondes = ?,
+                        utilisation_memoire = ?,
+                        force_wifi = ?,
+                        version_app = ?,
+                        message_erreur = ?,
+                        adresse_ip = ?,
+                        adresse_ip_externe = ?,
+                        adresse_ip_locale = ?,
+                        nom = COALESCE(?, nom)
+                    WHERE identifiant_unique = ?
+                ");
+
+                $stmt->execute([
+                    $statusData['status'] ?? 'online',
+                    $statusData['current_presentation_id'] ?? null,
+                    $statusData['current_presentation_name'] ?? null,
+                    $statusData['current_slide_index'] ?? null,
+                    $statusData['total_slides'] ?? null,
+                    $statusData['is_looping'] ? 1 : 0,
+                    $statusData['auto_play'] ? 1 : 0,
+                    $statusData['uptime_seconds'] ?? null,
+                    $statusData['memory_usage'] ?? null,
+                    $statusData['wifi_strength'] ?? null,
+                    $appVersion ?? $statusData['app_version'] ?? null,
+                    $statusData['error_message'] ?? null,
+                    $_SERVER['REMOTE_ADDR'] ?? '',
+                    $externalIP,
+                    $localIP,
+                    $deviceName,
+                    $deviceId
+                ]);
+
+                // Insérer un log d'activité
+                try {
+                    $stmt = $dbpdointranet->prepare("
+                        INSERT INTO logs_activite 
+                        (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
+                        VALUES ('connexion', ?, 'Heartbeat reçu', ?, ?, ?)
+                    ");
+                    $stmt->execute([
+                        $deviceId,
+                        json_encode($statusData),
+                        $_SERVER['REMOTE_ADDR'] ?? '',
+                        $externalIP
+                    ]);
+                } catch (PDOException $e) {
+                    // Si l'erreur est liée à une clé primaire dupliquée, on l'ignore simplement
+                    if (strpos($e->getMessage(), 'Duplicate entry') === false) {
+                        // Si c'est une autre erreur, on la propage
+                        throw $e;
+                    }
+                }
+
+                // Récupérer les commandes en attente
+                $stmt = $dbpdointranet->prepare("
+                    SELECT * FROM commandes_distantes 
+                    WHERE identifiant_appareil = ? 
+                    AND statut = 'en_attente'
+                    ORDER BY priorite DESC, date_creation ASC
+                    LIMIT 5
+                ");
+                $stmt->execute([$deviceId]);
+                $commands = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                jsonResponse([
+                    'success' => true, 
+                    'message' => 'Heartbeat reçu',
+                    'server_time' => date('Y-m-d H:i:s'),
+                    'commands' => $commands,
+                    'device_id' => $deviceId,
+                    'external_ip' => $externalIP,
+                    'local_ip' => $localIP
+                ]);
+
+            } catch (Exception $e) {
+                logError("Erreur heartbeat", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur lors du traitement du heartbeat: ' . $e->getMessage()], 500);
             }
         } else {
             jsonResponse(['error' => 'Méthode non autorisée'], 405);

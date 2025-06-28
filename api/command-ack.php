@@ -56,7 +56,7 @@ if (empty($externalIP)) {
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Erreur de connexion à la base de données: ' . $e->getMessage()]);
@@ -89,14 +89,13 @@ try {
     ");
     $stmt->execute([$status, $currentTime, $result, $commandId, $deviceId]);
 
-    // Enregistrer un log d'activité - CORRECTION: Ne pas spécifier l'ID pour éviter les conflits de clé primaire
-    $stmt = $dbpdointranet->prepare("
-        INSERT INTO logs_activite 
-        (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
-        VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
-    ");
-    
+    // Enregistrer un log d'activité
     try {
+        $stmt = $dbpdointranet->prepare("
+            INSERT INTO logs_activite 
+            (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+            VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
+        ");
         $stmt->execute([
             $deviceId,
             "Commande {$commande['commande']} " . ($status === 'executee' ? 'exécutée' : 'échouée'),

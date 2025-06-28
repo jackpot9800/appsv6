@@ -27,21 +27,25 @@ try {
         echo "<p style='color: green;'>$count appareils mis à jour avec l'heure actuelle.</p>";
         
         // Enregistrer un log d'activité
-        $stmt = $dbpdointranet->prepare("
-            INSERT INTO logs_activite 
-            (type_action, message, details, adresse_ip, date_action)
-            VALUES ('maintenance', 'Correction des horodatages des appareils', ?, ?, NOW())
-        ");
-        
-        $stmt->execute([
-            json_encode([
-                'action' => 'fix_all_timestamps',
-                'devices_count' => $count,
-                'timestamp' => time(),
-                'timezone' => date_default_timezone_get()
-            ]),
-            $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
-        ]);
+        try {
+            $stmt = $dbpdointranet->prepare("
+                INSERT INTO logs_activite 
+                (type_action, message, details, adresse_ip, date_action)
+                VALUES ('maintenance', 'Correction des horodatages des appareils', ?, ?, NOW())
+            ");
+            
+            $stmt->execute([
+                json_encode([
+                    'action' => 'fix_all_timestamps',
+                    'devices_count' => $count,
+                    'timestamp' => time(),
+                    'timezone' => date_default_timezone_get()
+                ]),
+                $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+            ]);
+        } catch (PDOException $e) {
+            echo "<p style='color: orange;'>Note: Log d'activité non enregistré: " . $e->getMessage() . "</p>";
+        }
     } elseif ($action === 'fix_device' && !empty($_GET['device_id'])) {
         // Mettre à jour un appareil spécifique
         $deviceId = $_GET['device_id'];
@@ -59,22 +63,26 @@ try {
             echo "<p style='color: green;'>Appareil $deviceId mis à jour avec l'heure actuelle.</p>";
             
             // Enregistrer un log d'activité
-            $stmt = $dbpdointranet->prepare("
-                INSERT INTO logs_activite 
-                (type_action, identifiant_appareil, message, details, adresse_ip, date_action)
-                VALUES ('maintenance', ?, 'Correction de l\'horodatage de l\'appareil', ?, ?, NOW())
-            ");
-            
-            $stmt->execute([
-                $deviceId,
-                json_encode([
-                    'action' => 'fix_device_timestamp',
-                    'device_id' => $deviceId,
-                    'timestamp' => time(),
-                    'timezone' => date_default_timezone_get()
-                ]),
-                $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
-            ]);
+            try {
+                $stmt = $dbpdointranet->prepare("
+                    INSERT INTO logs_activite 
+                    (type_action, identifiant_appareil, message, details, adresse_ip, date_action)
+                    VALUES ('maintenance', ?, 'Correction de l\'horodatage de l\'appareil', ?, ?, NOW())
+                ");
+                
+                $stmt->execute([
+                    $deviceId,
+                    json_encode([
+                        'action' => 'fix_device_timestamp',
+                        'device_id' => $deviceId,
+                        'timestamp' => time(),
+                        'timezone' => date_default_timezone_get()
+                    ]),
+                    $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+                ]);
+            } catch (PDOException $e) {
+                echo "<p style='color: orange;'>Note: Log d'activité non enregistré: " . $e->getMessage() . "</p>";
+            }
         } else {
             echo "<p style='color: red;'>Appareil $deviceId non trouvé ou non mis à jour.</p>";
         }

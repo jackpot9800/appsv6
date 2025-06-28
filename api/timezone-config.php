@@ -3,8 +3,8 @@
 // Inclure ce fichier au début de tous les scripts PHP pour assurer une cohérence du fuseau horaire
 
 // Définir le fuseau horaire par défaut pour l'application
-// Remplacez 'America/New_York' par votre fuseau horaire si différent
-date_default_timezone_set('America/New_York');
+// Remplacez 'America/Toronto' par votre fuseau horaire si différent
+date_default_timezone_set('America/Toronto');
 
 // Fonction pour convertir une date/heure UTC en fuseau horaire local
 function convertToLocalTime($utcTime, $format = 'Y-m-d H:i:s') {
