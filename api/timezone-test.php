@@ -1,12 +1,6 @@
 <?php
 // timezone-test.php - Script de test pour vérifier la configuration du fuseau horaire
-
-// Inclure la configuration du fuseau horaire
-require_once('timezone-config.php');
-
-// Connexion à la base de données
-require_once('dbpdointranet.php');
-$dbpdointranet->exec("USE affichageDynamique");
+header('Content-Type: text/html; charset=utf-8');
 
 // Afficher les informations de fuseau horaire
 echo "<h1>Test de configuration du fuseau horaire</h1>";
@@ -18,104 +12,159 @@ echo "<li>Heure PHP locale: " . date('Y-m-d H:i:s') . "</li>";
 echo "<li>Heure PHP UTC: " . gmdate('Y-m-d H:i:s') . "</li>";
 echo "</ul>";
 
-echo "<h2>Informations MySQL</h2>";
+// Connexion à la base de données
 try {
+    require_once('dbpdointranet.php');
+    $dbpdointranet->exec("USE affichageDynamique");
+    
+    echo "<h2>Informations MySQL</h2>";
     $stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");
     $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
-
+    
     echo "<ul>";
     echo "<li>Fuseau horaire MySQL global: " . $tzInfo['global_tz'] . "</li>";
     echo "<li>Fuseau horaire MySQL session: " . $tzInfo['session_tz'] . "</li>";
     echo "<li>Heure MySQL actuelle: " . $tzInfo['mysql_now'] . "</li>";
     echo "<li>Heure MySQL UTC: " . $tzInfo['mysql_utc'] . "</li>";
     echo "</ul>";
-} catch (Exception $e) {
-    echo "<p style='color: red;'>Erreur MySQL: " . $e->getMessage() . "</p>";
-}
-
-echo "<h2>Test de conversion</h2>";
-$localTime = date('Y-m-d H:i:s');
-$utcTime = convertToUTC($localTime);
-$backToLocal = convertToLocalTime($utcTime);
-
-echo "<ul>";
-echo "<li>Heure locale: " . $localTime . "</li>";
-echo "<li>Convertie en UTC: " . $utcTime . "</li>";
-echo "<li>Reconvertie en locale: " . $backToLocal . "</li>";
-echo "</ul>";
-
-echo "<h2>Test d'insertion et récupération</h2>";
-
-// Insérer un enregistrement de test avec l'heure actuelle
-try {
-    // Créer une table temporaire pour le test
-    $dbpdointranet->exec("
-        CREATE TEMPORARY TABLE IF NOT EXISTS test_timezone (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            description VARCHAR(255),
-            date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            date_creation_utc TIMESTAMP NULL
-        )
-    ");
     
-    // Insérer avec l'heure locale
-    $localTime = date('Y-m-d H:i:s');
-    $utcTime = convertToUTC($localTime);
+    // Tester l'insertion d'un enregistrement
+    echo "<h2>Test d'insertion</h2>";
     
+    // Insérer un log de test
     $stmt = $dbpdointranet->prepare("
-        INSERT INTO test_timezone (description, date_creation, date_creation_utc)
-        VALUES (?, ?, ?)
+        INSERT INTO logs_activite 
+        (type_action, message, details, adresse_ip, date_action)
+        VALUES ('maintenance', 'Test de fuseau horaire', ?, ?, NOW())
     ");
-    $stmt->execute(['Test timezone', $localTime, $utcTime]);
+    
+    $stmt->execute([
+        json_encode(['test' => true, 'timestamp' => time(), 'timezone' => date_default_timezone_get()]),
+        $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+    ]);
+    
     $insertId = $dbpdointranet->lastInsertId();
     
-    // Récupérer l'enregistrement
+    // Récupérer l'enregistrement inséré
     $stmt = $dbpdointranet->prepare("
-        SELECT * FROM test_timezone WHERE id = ?
+        SELECT * FROM logs_activite WHERE id = ?
     ");
     $stmt->execute([$insertId]);
-    $record = $stmt->fetch(PDO::FETCH_ASSOC);
+    $log = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    echo "<ul>";
-    echo "<li>ID: " . $record['id'] . "</li>";
-    echo "<li>Description: " . $record['description'] . "</li>";
-    echo "<li>Date création (stockée): " . $record['date_creation'] . "</li>";
-    echo "<li>Date création UTC (stockée): " . $record['date_creation_utc'] . "</li>";
-    echo "<li>Date création (convertie): " . convertToLocalTime($record['date_creation_utc']) . "</li>";
-    echo "</ul>";
+    echo "<p>Enregistrement inséré avec succès (ID: $insertId)</p>";
+    echo "<p>Date d'action: " . $log['date_action'] . "</p>";
     
-} catch (Exception $e) {
-    echo "<p style='color: red;'>Erreur: " . $e->getMessage() . "</p>";
-}
-
-echo "<h2>Dernières entrées dans la table appareils</h2>";
-
-// Afficher les dernières entrées de la table appareils
-try {
-    $stmt = $dbpdointranet->query("
-        SELECT id, nom, identifiant_unique, derniere_connexion 
-        FROM appareils 
-        ORDER BY derniere_connexion DESC 
-        LIMIT 5
-    ");
-    $appareils = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Vérifier si l'heure est correcte
+    $now = new DateTime();
+    $logTime = new DateTime($log['date_action']);
+    $diff = $now->getTimestamp() - $logTime->getTimestamp();
     
-    echo "<table border='1' cellpadding='5'>";
-    echo "<tr><th>ID</th><th>Nom</th><th>Identifiant</th><th>Dernière connexion</th><th>Convertie en local</th></tr>";
-    
-    foreach ($appareils as $appareil) {
-        echo "<tr>";
-        echo "<td>" . $appareil['id'] . "</td>";
-        echo "<td>" . $appareil['nom'] . "</td>";
-        echo "<td>" . $appareil['identifiant_unique'] . "</td>";
-        echo "<td>" . $appareil['derniere_connexion'] . "</td>";
-        echo "<td>" . convertToLocalTime($appareil['derniere_connexion']) . "</td>";
-        echo "</tr>";
+    if (abs($diff) < 10) { // Moins de 10 secondes de différence
+        echo "<p style='color: green;'>L'heure enregistrée est correcte (différence de $diff secondes).</p>";
+    } else {
+        echo "<p style='color: red;'>L'heure enregistrée n'est pas correcte (différence de $diff secondes).</p>";
     }
     
-    echo "</table>";
+    // Tester l'insertion dans la table appareils
+    echo "<h2>Test d'insertion dans la table appareils</h2>";
+    
+    // Insérer un appareil de test
+    $testDeviceId = 'test_device_' . uniqid();
+    $stmt = $dbpdointranet->prepare("
+        INSERT INTO appareils 
+        (nom, type_appareil, identifiant_unique, adresse_ip, derniere_connexion, statut)
+        VALUES (?, 'test', ?, ?, NOW(), 'actif')
+    ");
+    
+    $stmt->execute([
+        'Appareil de test',
+        $testDeviceId,
+        $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+    ]);
+    
+    // Récupérer l'appareil inséré
+    $stmt = $dbpdointranet->prepare("
+        SELECT * FROM appareils WHERE identifiant_unique = ?
+    ");
+    $stmt->execute([$testDeviceId]);
+    $appareil = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    echo "<p>Appareil inséré avec succès (ID: " . $appareil['id'] . ")</p>";
+    echo "<p>Dernière connexion: " . $appareil['derniere_connexion'] . "</p>";
+    
+    // Vérifier si l'heure est correcte
+    $now = new DateTime();
+    $deviceTime = new DateTime($appareil['derniere_connexion']);
+    $diff = $now->getTimestamp() - $deviceTime->getTimestamp();
+    
+    if (abs($diff) < 10) { // Moins de 10 secondes de différence
+        echo "<p style='color: green;'>L'heure enregistrée est correcte (différence de $diff secondes).</p>";
+    } else {
+        echo "<p style='color: red;'>L'heure enregistrée n'est pas correcte (différence de $diff secondes).</p>";
+    }
+    
+    // Supprimer l'appareil de test
+    $stmt = $dbpdointranet->prepare("
+        DELETE FROM appareils WHERE identifiant_unique = ?
+    ");
+    $stmt->execute([$testDeviceId]);
+    
+    // Tester la mise à jour d'un appareil existant
+    echo "<h2>Test de mise à jour d'un appareil existant</h2>";
+    
+    // Récupérer un appareil existant
+    $stmt = $dbpdointranet->query("
+        SELECT * FROM appareils 
+        ORDER BY derniere_connexion DESC 
+        LIMIT 1
+    ");
+    $existingDevice = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($existingDevice) {
+        echo "<p>Appareil existant trouvé (ID: " . $existingDevice['id'] . ")</p>";
+        echo "<p>Dernière connexion avant mise à jour: " . $existingDevice['derniere_connexion'] . "</p>";
+        
+        // Mettre à jour la dernière connexion
+        $stmt = $dbpdointranet->prepare("
+            UPDATE appareils 
+            SET derniere_connexion = NOW() 
+            WHERE id = ?
+        ");
+        $stmt->execute([$existingDevice['id']]);
+        
+        // Récupérer l'appareil mis à jour
+        $stmt = $dbpdointranet->prepare("
+            SELECT * FROM appareils WHERE id = ?
+        ");
+        $stmt->execute([$existingDevice['id']]);
+        $updatedDevice = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        echo "<p>Dernière connexion après mise à jour: " . $updatedDevice['derniere_connexion'] . "</p>";
+        
+        // Vérifier si l'heure est correcte
+        $now = new DateTime();
+        $deviceTime = new DateTime($updatedDevice['derniere_connexion']);
+        $diff = $now->getTimestamp() - $deviceTime->getTimestamp();
+        
+        if (abs($diff) < 10) { // Moins de 10 secondes de différence
+            echo "<p style='color: green;'>L'heure mise à jour est correcte (différence de $diff secondes).</p>";
+        } else {
+            echo "<p style='color: red;'>L'heure mise à jour n'est pas correcte (différence de $diff secondes).</p>";
+        }
+    } else {
+        echo "<p>Aucun appareil existant trouvé.</p>";
+    }
     
 } catch (Exception $e) {
-    echo "<p style='color: red;'>Erreur: " . $e->getMessage() . "</p>";
+    echo "<h2 style='color: red;'>Erreur</h2>";
+    echo "<p>" . $e->getMessage() . "</p>";
 }
 ?>
+
+<h2>Liens utiles</h2>
+<ul>
+    <li><a href="timezone-fix.php">Diagnostic et correction du fuseau horaire</a></li>
+    <li><a href="timezone-update.php">Mettre à jour le fuseau horaire</a></li>
+    <li><a href="index.php">Retour à l'accueil</a></li>
+</ul>
