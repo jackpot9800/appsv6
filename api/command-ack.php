@@ -5,6 +5,9 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type, X-Device-Name, X-Local-IP, X-External-IP, X-App-Version');
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -42,10 +45,8 @@ if (empty($deviceId) || empty($commandId)) {
 
 // Récupérer les informations supplémentaires des headers
 $deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
-$deviceType = $_SERVER['HTTP_X_DEVICE_TYPE'] ?? 'firetv';
 $localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
 $externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
-$appVersion = $_SERVER['HTTP_X_APP_VERSION'] ?? null;
 
 // Si pas d'IP externe dans les headers, utiliser l'IP de la requête
 if (empty($externalIP)) {
@@ -76,20 +77,23 @@ if (!$commande) {
     exit;
 }
 
-// Mettre à jour le statut de la commande
+// Mettre à jour le statut de la commande avec le fuseau horaire correct
 try {
+    // Utiliser l'heure locale correcte
+    $currentTime = date('Y-m-d H:i:s');
+    
     $stmt = $dbpdointranet->prepare("
         UPDATE commandes_distantes 
-        SET statut = ?, date_execution = NOW(), resultat_execution = ?
+        SET statut = ?, date_execution = ?, resultat_execution = ?
         WHERE id = ? AND identifiant_appareil = ?
     ");
-    $stmt->execute([$status, $result, $commandId, $deviceId]);
+    $stmt->execute([$status, $currentTime, $result, $commandId, $deviceId]);
 
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
-        VALUES ('commande_distante', ?, ?, ?, ?, ?)
+        (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+        VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
         $deviceId,
@@ -101,17 +105,17 @@ try {
             'result' => $result,
             'local_ip' => $localIP,
             'external_ip' => $externalIP,
-            'device_name' => $deviceName,
-            'app_version' => $appVersion
+            'device_name' => $deviceName
         ]),
         $_SERVER['REMOTE_ADDR'] ?? '',
-        $externalIP
+        $externalIP,
+        $currentTime // Utiliser l'heure locale correcte
     ]);
 
     echo json_encode([
         'success' => true, 
         'message' => 'Statut de la commande mis à jour',
-        'server_time' => date('Y-m-d H:i:s')
+        'server_time' => $currentTime // Renvoyer l'heure du serveur pour synchronisation
     ]);
 } catch (Exception $e) {
     http_response_code(500);

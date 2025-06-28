@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 
 // Définition des clés de stockage
 const STORAGE_KEYS = {
@@ -9,6 +10,7 @@ const STORAGE_KEYS = {
   ENROLLMENT_TOKEN: 'enrollment_token',
   ASSIGNED_PRESENTATION: 'assigned_presentation',
   DEFAULT_PRESENTATION: 'default_presentation',
+  DEVICE_NAME: 'device_name',
 };
 
 export interface Presentation {
@@ -80,6 +82,7 @@ export interface DefaultPresentation {
 class ApiService {
   private baseUrl: string = '';
   private deviceId: string = '';
+  private deviceName: string = '';
   private isRegistered: boolean = false;
   private enrollmentToken: string = '';
   private assignmentCheckInterval: NodeJS.Timeout | null = null;
@@ -92,6 +95,8 @@ class ApiService {
   private lastConnectionError: string = '';
   private connectionAttempts: number = 0;
   private directFetchMode: boolean = false; // Mode fetch direct pour contourner les problèmes
+  private localIpAddress: string | null = null;
+  private externalIpAddress: string | null = null;
 
   async initialize() {
     try {
@@ -101,6 +106,7 @@ class ApiService {
       const savedDeviceId = await AsyncStorage.getItem(STORAGE_KEYS.DEVICE_ID);
       const savedRegistration = await AsyncStorage.getItem(STORAGE_KEYS.DEVICE_REGISTERED);
       const savedToken = await AsyncStorage.getItem(STORAGE_KEYS.ENROLLMENT_TOKEN);
+      const savedDeviceName = await AsyncStorage.getItem(STORAGE_KEYS.DEVICE_NAME);
       
       if (savedUrl) {
         this.baseUrl = savedUrl;
@@ -116,6 +122,15 @@ class ApiService {
         console.log('Generated new device ID:', this.deviceId);
       }
 
+      if (savedDeviceName) {
+        this.deviceName = savedDeviceName;
+        console.log('Loaded device name:', this.deviceName);
+      } else {
+        this.deviceName = `Fire TV ${this.deviceId.substring(this.deviceId.length - 6)}`;
+        await AsyncStorage.setItem(STORAGE_KEYS.DEVICE_NAME, this.deviceName);
+        console.log('Generated new device name:', this.deviceName);
+      }
+
       if (savedRegistration === 'true') {
         this.isRegistered = true;
         console.log('Device is already registered');
@@ -126,14 +141,64 @@ class ApiService {
         console.log('Loaded enrollment token');
       }
 
+      // Tenter de récupérer l'adresse IP locale
+      await this.getLocalIPAddress();
+      
+      // Tenter de récupérer l'adresse IP externe
+      await this.getExternalIPAddress();
+
       console.log('=== API SERVICE INITIALIZED ===');
       console.log('Server URL:', this.baseUrl);
       console.log('Device ID:', this.deviceId);
+      console.log('Device Name:', this.deviceName);
       console.log('Is Registered:', this.isRegistered);
       console.log('API Type:', this.apiType);
+      console.log('Local IP:', this.localIpAddress);
+      console.log('External IP:', this.externalIpAddress);
       
     } catch (error) {
       console.error('Error initializing API service:', error);
+    }
+  }
+
+  /**
+   * Tente de récupérer l'adresse IP locale de l'appareil
+   */
+  private async getLocalIPAddress() {
+    try {
+      if (Platform.OS !== 'web') {
+        // Utiliser NetInfo pour obtenir l'adresse IP locale
+        const netInfo = await NetInfo.fetch();
+        if (netInfo.type === 'wifi' && netInfo.details) {
+          this.localIpAddress = (netInfo.details as any).ipAddress || null;
+        }
+      }
+      
+      if (!this.localIpAddress) {
+        // Méthode de secours - simuler une adresse IP locale
+        this.localIpAddress = `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+      }
+      
+      console.log('Local IP address:', this.localIpAddress);
+    } catch (error) {
+      console.log('Failed to get local IP address:', error);
+      this.localIpAddress = null;
+    }
+  }
+
+  /**
+   * Tente de récupérer l'adresse IP externe de l'appareil
+   */
+  private async getExternalIPAddress() {
+    try {
+      // Utiliser un service externe pour obtenir l'adresse IP externe
+      const response = await fetch('https://api.ipify.org?format=json');
+      const data = await response.json();
+      this.externalIpAddress = data.ip;
+      console.log('External IP address:', this.externalIpAddress);
+    } catch (error) {
+      console.log('Failed to get external IP address:', error);
+      this.externalIpAddress = null;
     }
   }
 
@@ -177,6 +242,8 @@ class ApiService {
         '/device/assigned-presentation': '/appareil/presentation-assignee',
         '/device/default-presentation': '/appareil/presentation-defaut',
         '/device/presentation': '/appareil/presentation',
+        '/device/heartbeat': '/appareil/heartbeat',
+        '/device/commands': '/appareil/commandes',
         '/presentations': '/presentations',
         '/presentation': '/presentation',
         '/version': '/version'
@@ -604,6 +671,15 @@ class ApiService {
     return this.deviceId;
   }
 
+  getDeviceName(): string {
+    return this.deviceName;
+  }
+
+  async setDeviceName(name: string): Promise<void> {
+    this.deviceName = name;
+    await AsyncStorage.setItem(STORAGE_KEYS.DEVICE_NAME, name);
+  }
+
   isDeviceRegistered(): boolean {
     return this.isRegistered;
   }
@@ -811,6 +887,7 @@ class ApiService {
     console.log('URL:', url);
     console.log('Method:', options.method || 'GET');
     console.log('Device ID:', this.deviceId);
+    console.log('Device Name:', this.deviceName);
     console.log('API Type:', this.apiType);
     
     // Headers améliorés pour serveurs OVH et Android
@@ -822,9 +899,12 @@ class ApiService {
       'Expires': '0',
       'User-Agent': 'PresentationKiosk/2.0 (Android; FireTV; OVH-Compatible)',
       'X-Device-ID': this.deviceId,
+      'X-Device-Name': this.deviceName,
       'X-Device-Type': 'firetv',
       'X-App-Version': '2.0.0',
       'X-Platform': 'android',
+      'X-Local-IP': this.localIpAddress || '',
+      'X-External-IP': this.externalIpAddress || '',
       'Connection': 'keep-alive',
       'Accept-Encoding': 'gzip, deflate',
       'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
@@ -978,12 +1058,13 @@ class ApiService {
     try {
       console.log('=== REGISTERING DEVICE ===');
       console.log('Device ID:', this.deviceId);
+      console.log('Device Name:', this.deviceName);
       console.log('Server URL:', this.baseUrl);
       console.log('API Type:', this.apiType);
       
       const deviceInfo: DeviceRegistration = {
         device_id: this.deviceId,
-        name: `Fire TV Stick - ${this.deviceId.split('_').pop()}`,
+        name: this.deviceName || `Fire TV Stick - ${this.deviceId.split('_').pop()}`,
         type: 'firetv',
         platform: 'android',
         user_agent: 'PresentationKiosk/2.0 (Android; FireTV; OVH-Compatible)',
@@ -1210,6 +1291,7 @@ class ApiService {
   async getDebugInfo(): Promise<{
     serverUrl: string;
     deviceId: string;
+    deviceName: string;
     isRegistered: boolean;
     hasToken: boolean;
     assignmentCheckActive: boolean;
@@ -1219,10 +1301,13 @@ class ApiService {
     apiType: string;
     lastConnectionError: string;
     connectionAttempts: number;
+    localIpAddress: string | null;
+    externalIpAddress: string | null;
   }> {
     return {
       serverUrl: this.baseUrl,
       deviceId: this.deviceId,
+      deviceName: this.deviceName,
       isRegistered: this.isRegistered,
       hasToken: !!this.enrollmentToken,
       assignmentCheckActive: !!this.assignmentCheckInterval,
@@ -1231,7 +1316,9 @@ class ApiService {
       defaultCheckEnabled: this.defaultCheckEnabled,
       apiType: this.apiType,
       lastConnectionError: this.lastConnectionError,
-      connectionAttempts: this.connectionAttempts
+      connectionAttempts: this.connectionAttempts,
+      localIpAddress: this.localIpAddress,
+      externalIpAddress: this.externalIpAddress
     };
   }
 

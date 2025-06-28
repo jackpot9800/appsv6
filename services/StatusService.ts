@@ -84,7 +84,7 @@ class StatusService {
         // Utiliser NetInfo pour obtenir l'adresse IP locale
         const netInfo = await NetInfo.fetch();
         if (netInfo.type === 'wifi' && netInfo.details) {
-          this.localIpAddress = netInfo.details.ipAddress || null;
+          this.localIpAddress = (netInfo.details as any).ipAddress || null;
         }
       }
       
@@ -185,7 +185,10 @@ class StatusService {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
           'X-Device-Type': 'firetv',
+          'X-Device-Name': apiService.getDeviceName(),
           'X-App-Version': '2.0.0',
+          'X-Local-IP': this.localIpAddress || '',
+          'X-External-IP': this.externalIpAddress || '',
         },
         body: JSON.stringify(status),
       });
@@ -233,7 +236,10 @@ class StatusService {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
           'X-Device-Type': 'firetv',
+          'X-Device-Name': apiService.getDeviceName(),
           'X-App-Version': '2.0.0',
+          'X-Local-IP': this.localIpAddress || '',
+          'X-External-IP': this.externalIpAddress || '',
         },
       });
 
@@ -278,7 +284,10 @@ class StatusService {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
           'X-Device-Type': 'firetv',
+          'X-Device-Name': apiService.getDeviceName(),
           'X-App-Version': '2.0.0',
+          'X-Local-IP': this.localIpAddress || '',
+          'X-External-IP': this.externalIpAddress || '',
         },
         body: JSON.stringify({
           command_id: commandId,
@@ -303,7 +312,7 @@ class StatusService {
 
     const status: DeviceStatus = {
       device_id: deviceId,
-      device_name: this.deviceName || `Fire TV ${deviceId.substring(deviceId.length - 6)}`,
+      device_name: this.deviceName || apiService.getDeviceName() || `Fire TV ${deviceId.substring(deviceId.length - 6)}`,
       status: this.currentStatus?.status || 'online',
       current_presentation_id: this.currentStatus?.current_presentation_id,
       current_presentation_name: this.currentStatus?.current_presentation_name,

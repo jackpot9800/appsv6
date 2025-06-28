@@ -1,5 +1,5 @@
 <?php
-// device-status-fix.php - Script pour corriger le statut des appareils inactifs
+// device-status-fix.php - Script pour corriger le statut des appareils
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -167,65 +167,6 @@ switch ($action) {
             }
         } catch (Exception $e) {
             jsonResponse(['error' => 'Erreur lors de la correction du statut: ' . $e->getMessage()], 500);
-        }
-        break;
-        
-    case 'auto_fix':
-        // Configurer la correction automatique des statuts
-        $enabled = isset($_GET['enabled']) ? ($_GET['enabled'] === 'true' || $_GET['enabled'] === '1') : true;
-        
-        try {
-            // Vérifier si l'événement existe déjà
-            $stmt = $dbpdointranet->query("
-                SELECT * FROM information_schema.EVENTS 
-                WHERE EVENT_SCHEMA = 'affichageDynamique' 
-                AND EVENT_NAME = 'auto_fix_device_status'
-            ");
-            $eventExists = $stmt->rowCount() > 0;
-            
-            if ($enabled) {
-                // Créer ou remplacer l'événement
-                $dbpdointranet->exec("
-                    CREATE EVENT IF NOT EXISTS auto_fix_device_status
-                    ON SCHEDULE EVERY 1 MINUTE
-                    DO
-                        UPDATE appareils 
-                        SET 
-                            statut_temps_reel = 'online',
-                            statut = 'actif'
-                        WHERE statut = 'actif'
-                        AND derniere_connexion > DATE_SUB(NOW(), INTERVAL 2 MINUTE)
-                        AND (statut_temps_reel = 'offline' OR statut_temps_reel IS NULL)
-                ");
-                
-                // Activer l'événement s'il existe déjà
-                if ($eventExists) {
-                    $dbpdointranet->exec("ALTER EVENT auto_fix_device_status ENABLE");
-                }
-                
-                jsonResponse([
-                    'success' => true,
-                    'message' => 'Correction automatique des statuts activée',
-                    'event_created' => !$eventExists
-                ]);
-            } else {
-                // Désactiver l'événement
-                if ($eventExists) {
-                    $dbpdointranet->exec("ALTER EVENT auto_fix_device_status DISABLE");
-                    
-                    jsonResponse([
-                        'success' => true,
-                        'message' => 'Correction automatique des statuts désactivée'
-                    ]);
-                } else {
-                    jsonResponse([
-                        'success' => false,
-                        'message' => 'L\'événement de correction automatique n\'existe pas'
-                    ]);
-                }
-            }
-        } catch (Exception $e) {
-            jsonResponse(['error' => 'Erreur lors de la configuration de la correction automatique: ' . $e->getMessage()], 500);
         }
         break;
         

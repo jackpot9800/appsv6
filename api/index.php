@@ -85,12 +85,14 @@ if (empty($path)) {
         'status' => 'API is running',
         'version' => '2.0',
         'timestamp' => date('c'),
+        'server_time' => date('Y-m-d H:i:s'),
+        'timezone' => date_default_timezone_get(),
         'endpoints' => [
             'GET /version' => 'Get API version',
             'GET /presentations' => 'List all presentations',
             'GET /presentation/{id}' => 'Get presentation details',
             'POST /device/register' => 'Register a device',
-            'POST /appareil/enregistrer' => 'Enregistrer un appareil (alias)',
+            'POST /appareil/enregistrer' => 'Enregistrer appareil (alias)',
             'GET /device/assigned-presentation' => 'Get assigned presentation for device',
             'GET /appareil/presentation-assignee' => 'Présentation assignée (alias)',
             'GET /device/default-presentation' => 'Get default presentation for device',
@@ -121,7 +123,9 @@ $pathMapping = [
     'device/assigned-presentation' => 'appareil/presentation-assignee',
     'appareil/presentation-assignee' => 'appareil/presentation-assignee',
     'device/default-presentation' => 'appareil/presentation-defaut',
-    'appareil/presentation-defaut' => 'appareil/presentation-defaut'
+    'appareil/presentation-defaut' => 'appareil/presentation-defaut',
+    'device/heartbeat' => 'appareil/heartbeat',
+    'appareil/heartbeat' => 'appareil/heartbeat'
 ];
 
 // Vérifier si le chemin demandé a un mapping
@@ -137,6 +141,8 @@ switch ($path) {
             'api_status' => 'running',
             'database' => 'affichageDynamique',
             'timestamp' => date('c'),
+            'server_time' => date('Y-m-d H:i:s'),
+            'timezone' => date_default_timezone_get(),
             'php_version' => PHP_VERSION,
             'features' => [
                 'presentations_avancees',
@@ -302,12 +308,128 @@ switch ($path) {
                     'success' => true,
                     'message' => 'Appareil enregistré avec succès',
                     'device_id' => $data['device_id'],
-                    'token' => 'enrolled_' . uniqid()
+                    'token' => 'enrolled_' . uniqid(),
+                    'server_time' => date('Y-m-d H:i:s')
                 ]);
                 
             } catch (PDOException $e) {
                 logError("Database error in device registration", ['error' => $e->getMessage()]);
                 jsonResponse(['error' => 'Erreur base de données lors de l\'enregistrement: ' . $e->getMessage()], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
+    case 'appareil/heartbeat':
+        if ($method === 'POST') {
+            try {
+                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
+                
+                if (empty($deviceId)) {
+                    jsonResponse(['error' => 'ID appareil requis'], 400);
+                }
+
+                $input = file_get_contents('php://input');
+                $statusData = json_decode($input, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    jsonResponse(['error' => 'JSON invalide'], 400);
+                }
+
+                // Récupérer les informations supplémentaires des headers
+                $deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
+                $deviceType = $_SERVER['HTTP_X_DEVICE_TYPE'] ?? 'firetv';
+                $localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
+                $externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
+                $appVersion = $_SERVER['HTTP_X_APP_VERSION'] ?? null;
+                
+                // Si pas d'IP externe dans les headers, utiliser l'IP de la requête
+                if (empty($externalIP)) {
+                    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
+                }
+
+                // Mettre à jour le statut de l'appareil
+                $stmt = $dbpdointranet->prepare("
+                    UPDATE appareils 
+                    SET 
+                        derniere_connexion = NOW(),
+                        statut_temps_reel = ?,
+                        presentation_courante_id = ?,
+                        presentation_courante_nom = ?,
+                        slide_courant_index = ?,
+                        total_slides = ?,
+                        mode_boucle = ?,
+                        lecture_automatique = ?,
+                        uptime_secondes = ?,
+                        utilisation_memoire = ?,
+                        force_wifi = ?,
+                        version_app = ?,
+                        message_erreur = ?,
+                        adresse_ip = ?,
+                        adresse_ip_externe = ?,
+                        adresse_ip_locale = ?,
+                        nom = COALESCE(?, nom)
+                    WHERE identifiant_unique = ?
+                ");
+
+                $stmt->execute([
+                    $statusData['status'] ?? 'online',
+                    $statusData['current_presentation_id'] ?? null,
+                    $statusData['current_presentation_name'] ?? null,
+                    $statusData['current_slide_index'] ?? null,
+                    $statusData['total_slides'] ?? null,
+                    $statusData['is_looping'] ? 1 : 0,
+                    $statusData['auto_play'] ? 1 : 0,
+                    $statusData['uptime_seconds'] ?? null,
+                    $statusData['memory_usage'] ?? null,
+                    $statusData['wifi_strength'] ?? null,
+                    $appVersion ?? $statusData['app_version'] ?? null,
+                    $statusData['error_message'] ?? null,
+                    $_SERVER['REMOTE_ADDR'] ?? '',
+                    $externalIP,
+                    $localIP,
+                    $deviceName,
+                    $deviceId
+                ]);
+
+                // Insérer un log d'activité
+                $stmt = $dbpdointranet->prepare("
+                    INSERT INTO logs_activite 
+                    (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
+                    VALUES ('connexion', ?, 'Heartbeat reçu', ?, ?, ?)
+                ");
+                $stmt->execute([
+                    $deviceId,
+                    json_encode($statusData),
+                    $_SERVER['REMOTE_ADDR'] ?? '',
+                    $externalIP
+                ]);
+
+                // Récupérer les commandes en attente
+                $stmt = $dbpdointranet->prepare("
+                    SELECT * FROM commandes_distantes 
+                    WHERE identifiant_appareil = ? 
+                    AND statut = 'en_attente'
+                    ORDER BY priorite DESC, date_creation ASC
+                    LIMIT 5
+                ");
+                $stmt->execute([$deviceId]);
+                $commandes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                jsonResponse([
+                    'success' => true, 
+                    'message' => 'Heartbeat reçu',
+                    'server_time' => date('Y-m-d H:i:s'),
+                    'commands' => $commandes,
+                    'device_id' => $deviceId,
+                    'external_ip' => $externalIP,
+                    'local_ip' => $localIP
+                ]);
+
+            } catch (Exception $e) {
+                logError("Erreur heartbeat", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur lors du traitement du heartbeat: ' . $e->getMessage()], 500);
             }
         } else {
             jsonResponse(['error' => 'Méthode non autorisée'], 405);
@@ -426,6 +548,40 @@ switch ($path) {
             } catch (PDOException $e) {
                 logError("Database error in default presentation", ['error' => $e->getMessage()]);
                 jsonResponse(['error' => 'Erreur base de données'], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
+    case 'appareil/commandes':
+        if ($method === 'GET') {
+            try {
+                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
+                
+                if (empty($deviceId)) {
+                    jsonResponse(['error' => 'ID appareil requis'], 400);
+                }
+
+                // Récupérer les commandes en attente pour cet appareil
+                $stmt = $dbpdointranet->prepare("
+                    SELECT * FROM commandes_distantes 
+                    WHERE identifiant_appareil = ? 
+                    AND statut = 'en_attente'
+                    ORDER BY priorite DESC, date_creation ASC
+                ");
+                $stmt->execute([$deviceId]);
+                $commands = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                jsonResponse([
+                    'success' => true,
+                    'commands' => $commands,
+                    'server_time' => date('Y-m-d H:i:s')
+                ]);
+
+            } catch (Exception $e) {
+                logError("Erreur récupération commandes", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur lors de la récupération des commandes'], 500);
             }
         } else {
             jsonResponse(['error' => 'Méthode non autorisée'], 405);
@@ -570,7 +726,11 @@ switch ($path) {
                     'GET /device/assigned-presentation' => 'Get assigned presentation for device',
                     'GET /appareil/presentation-assignee' => 'Présentation assignée (alias)',
                     'GET /device/default-presentation' => 'Get default presentation for device',
-                    'GET /appareil/presentation-defaut' => 'Présentation par défaut (alias)'
+                    'GET /appareil/presentation-defaut' => 'Présentation par défaut (alias)',
+                    'POST /device/heartbeat' => 'Send device heartbeat',
+                    'POST /appareil/heartbeat' => 'Envoyer heartbeat (alias)',
+                    'GET /device/commands' => 'Get pending commands',
+                    'GET /appareil/commandes' => 'Récupérer commandes (alias)'
                 ]
             ], 404);
         }

@@ -5,6 +5,9 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type, X-Device-Name, X-Local-IP, X-External-IP, X-App-Version');
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -94,10 +97,13 @@ if (!$appareil) {
 
 // Mettre à jour le statut de l'appareil
 try {
+    // Utiliser NOW() avec le fuseau horaire correct
+    $currentTime = date('Y-m-d H:i:s');
+    
     $stmt = $dbpdointranet->prepare("
         UPDATE appareils 
         SET 
-            derniere_connexion = NOW(),
+            derniere_connexion = ?,
             statut_temps_reel = ?,
             presentation_courante_id = ?,
             presentation_courante_nom = ?,
@@ -118,6 +124,7 @@ try {
     ");
 
     $stmt->execute([
+        $currentTime, // Utiliser l'heure locale correcte
         $data['status'] ?? 'online',
         $data['current_presentation_id'] ?? null,
         $data['current_presentation_name'] ?? null,
@@ -140,8 +147,8 @@ try {
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
-        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?)
+        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?, ?)
     ");
     $stmt->execute([
         $appareilId,
@@ -151,14 +158,14 @@ try {
             'current_presentation' => $data['current_presentation_name'] ?? null,
             'local_ip' => $localIP,
             'external_ip' => $externalIP,
-            'device_name' => $deviceName,
-            'app_version' => $appVersion ?? $data['app_version'] ?? null
+            'device_name' => $deviceName
         ]),
         $_SERVER['REMOTE_ADDR'] ?? '',
-        $externalIP
+        $externalIP,
+        $currentTime // Utiliser l'heure locale correcte
     ]);
 
-    // Récupérer les commandes en attente
+    // Réponse avec les commandes en attente
     $stmt = $dbpdointranet->prepare("
         SELECT * FROM commandes_distantes 
         WHERE identifiant_appareil = ? 
@@ -182,11 +189,10 @@ try {
         $stmt->execute($commandIds);
     }
 
-    // Réponse avec les commandes en attente et l'heure du serveur
     echo json_encode([
         'success' => true, 
         'message' => 'Heartbeat reçu',
-        'server_time' => date('Y-m-d H:i:s'), 
+        'server_time' => $currentTime, // Renvoyer l'heure du serveur pour synchronisation
         'commands' => $commandes,
         'device_id' => $deviceId,
         'external_ip' => $externalIP,
