@@ -5,11 +5,14 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 ini_set('log_errors', 1);
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Headers CORS améliorés
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Device-ID, X-Device-Type, X-Enrollment-Token, X-Device-Registered, X-App-Version, User-Agent');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Device-ID, X-Device-Type, X-Enrollment-Token, X-Device-Registered, X-App-Version, User-Agent, X-Device-Name, X-Local-IP, X-External-IP');
 
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -87,8 +90,11 @@ if (empty($path)) {
             'GET /presentations' => 'List all presentations',
             'GET /presentation/{id}' => 'Get presentation details',
             'POST /device/register' => 'Register a device',
+            'POST /appareil/enregistrer' => 'Enregistrer un appareil (alias)',
             'GET /device/assigned-presentation' => 'Get assigned presentation for device',
-            'GET /device/default-presentation' => 'Get default presentation for device'
+            'GET /appareil/presentation-assignee' => 'Présentation assignée (alias)',
+            'GET /device/default-presentation' => 'Get default presentation for device',
+            'GET /appareil/presentation-defaut' => 'Présentation par défaut (alias)'
         ]
     ]);
 }
@@ -106,6 +112,21 @@ try {
 } catch (Exception $e) {
     logError("Database connection failed", ['error' => $e->getMessage()]);
     jsonResponse(['error' => 'Connexion à la base de données échouée: ' . $e->getMessage()], 500);
+}
+
+// Mapper les chemins pour la compatibilité entre les deux versions d'API
+$pathMapping = [
+    'device/register' => 'appareil/enregistrer',
+    'appareil/enregistrer' => 'appareil/enregistrer',
+    'device/assigned-presentation' => 'appareil/presentation-assignee',
+    'appareil/presentation-assignee' => 'appareil/presentation-assignee',
+    'device/default-presentation' => 'appareil/presentation-defaut',
+    'appareil/presentation-defaut' => 'appareil/presentation-defaut'
+];
+
+// Vérifier si le chemin demandé a un mapping
+if (isset($pathMapping[$path])) {
+    $path = $pathMapping[$path];
 }
 
 // Router les requêtes
@@ -183,8 +204,234 @@ switch ($path) {
         }
         break;
 
-    // Ajoutez ici les autres endpoints selon vos besoins...
-    
+    case 'appareil/enregistrer':
+        if ($method === 'POST') {
+            try {
+                $input = file_get_contents('php://input');
+                $data = json_decode($input, true);
+                
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    jsonResponse(['error' => 'JSON invalide dans le corps de la requête'], 400);
+                }
+                
+                // Validation des champs requis
+                if (empty($data['device_id']) || empty($data['name'])) {
+                    jsonResponse(['error' => 'Champs requis manquants: device_id et name'], 400);
+                }
+                
+                // Récupérer les informations supplémentaires des headers
+                $deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? $data['name'];
+                $deviceType = $_SERVER['HTTP_X_DEVICE_TYPE'] ?? $data['type'] ?? 'firetv';
+                $localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
+                $externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
+                $appVersion = $_SERVER['HTTP_X_APP_VERSION'] ?? $data['version'] ?? '1.0.0';
+                
+                // Si pas d'IP externe dans les headers, utiliser l'IP de la requête
+                if (empty($externalIP)) {
+                    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
+                }
+                
+                // Enregistrer ou mettre à jour l'appareil
+                $stmt = $dbpdointranet->prepare("
+                    INSERT INTO appareils 
+                    (nom, type_appareil, identifiant_unique, adresse_ip, adresse_ip_externe, adresse_ip_locale, capacites, version_app, statut)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'actif')
+                    ON DUPLICATE KEY UPDATE 
+                        derniere_connexion = NOW(),
+                        nom = VALUES(nom),
+                        adresse_ip = VALUES(adresse_ip),
+                        adresse_ip_externe = VALUES(adresse_ip_externe),
+                        adresse_ip_locale = VALUES(adresse_ip_locale),
+                        capacites = VALUES(capacites),
+                        version_app = VALUES(version_app),
+                        statut = 'actif',
+                        statut_temps_reel = 'online'
+                ");
+                
+                $capabilities = json_encode($data['capabilities'] ?? []);
+                $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+                
+                $stmt->execute([
+                    $deviceName, 
+                    $deviceType, 
+                    $data['device_id'], 
+                    $ip,
+                    $externalIP,
+                    $localIP,
+                    $capabilities,
+                    $appVersion
+                ]);
+                
+                // Récupérer l'ID de l'appareil
+                $appareilId = $dbpdointranet->lastInsertId();
+                if (!$appareilId) {
+                    // L'appareil existait déjà, récupérer son ID
+                    $stmt = $dbpdointranet->prepare("SELECT id FROM appareils WHERE identifiant_unique = ?");
+                    $stmt->execute([$data['device_id']]);
+                    $appareilId = $stmt->fetchColumn();
+                }
+                
+                // Insérer un log de connexion
+                $stmt = $dbpdointranet->prepare("
+                    INSERT INTO logs_activite 
+                    (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe)
+                    VALUES ('connexion', ?, ?, ?, ?, ?, ?)
+                ");
+                $stmt->execute([
+                    $appareilId,
+                    $data['device_id'],
+                    "Appareil enregistré avec succès",
+                    json_encode([
+                        'name' => $deviceName,
+                        'type' => $deviceType,
+                        'local_ip' => $localIP,
+                        'external_ip' => $externalIP,
+                        'app_version' => $appVersion
+                    ]),
+                    $ip,
+                    $externalIP
+                ]);
+                
+                logError("Device registered", [
+                    'device_id' => $data['device_id'],
+                    'name' => $deviceName,
+                    'type' => $deviceType
+                ]);
+                
+                jsonResponse([
+                    'success' => true,
+                    'message' => 'Appareil enregistré avec succès',
+                    'device_id' => $data['device_id'],
+                    'token' => 'enrolled_' . uniqid()
+                ]);
+                
+            } catch (PDOException $e) {
+                logError("Database error in device registration", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur base de données lors de l\'enregistrement: ' . $e->getMessage()], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
+    case 'appareil/presentation-assignee':
+        if ($method === 'GET') {
+            try {
+                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
+                
+                if (empty($deviceId)) {
+                    jsonResponse(['error' => 'ID appareil requis'], 400);
+                }
+                
+                logError("Checking assigned presentation", ['device_id' => $deviceId]);
+                
+                // Chercher une diffusion active pour cet appareil
+                $stmt = $dbpdointranet->prepare("
+                    SELECT 
+                        d.*,
+                        p.nom as presentation_name, 
+                        p.description as presentation_description
+                    FROM diffusions d
+                    JOIN presentations p ON d.presentation_id = p.id
+                    WHERE d.identifiant_appareil = ? 
+                    AND d.statut = 'active'
+                    AND (d.date_fin IS NULL OR d.date_fin > NOW())
+                    AND (d.date_debut IS NULL OR d.date_debut <= NOW())
+                    ORDER BY d.priorite DESC, d.date_creation DESC
+                    LIMIT 1
+                ");
+                $stmt->execute([$deviceId]);
+                $assignedPresentation = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($assignedPresentation) {
+                    // Convertir les noms de colonnes pour compatibilité
+                    $result = [
+                        'id' => $assignedPresentation['id'],
+                        'presentation_id' => $assignedPresentation['presentation_id'],
+                        'presentation_name' => $assignedPresentation['presentation_name'],
+                        'presentation_description' => $assignedPresentation['presentation_description'],
+                        'auto_play' => (bool)$assignedPresentation['lecture_automatique'],
+                        'loop_mode' => (bool)$assignedPresentation['mode_boucle'],
+                        'created_at' => $assignedPresentation['date_creation']
+                    ];
+                    
+                    logError("Assigned presentation found", [
+                        'device_id' => $deviceId,
+                        'presentation_id' => $result['presentation_id']
+                    ]);
+                    
+                    jsonResponse(['assigned_presentation' => $result]);
+                } else {
+                    logError("No assigned presentation", ['device_id' => $deviceId]);
+                    jsonResponse(['assigned_presentation' => null]);
+                }
+                
+            } catch (PDOException $e) {
+                logError("Database error in assigned presentation", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur base de données'], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
+    case 'appareil/presentation-defaut':
+        if ($method === 'GET') {
+            try {
+                $deviceId = $_SERVER['HTTP_X_DEVICE_ID'] ?? '';
+                
+                if (empty($deviceId)) {
+                    jsonResponse(['error' => 'ID appareil requis'], 400);
+                }
+                
+                logError("Checking default presentation", ['device_id' => $deviceId]);
+                
+                // Chercher la présentation par défaut de cet appareil
+                $stmt = $dbpdointranet->prepare("
+                    SELECT 
+                        a.presentation_defaut_id,
+                        a.identifiant_unique,
+                        a.nom as nom_appareil,
+                        p.id as presentation_id,
+                        p.nom as presentation_name, 
+                        p.description as presentation_description,
+                        COUNT(pm.media_id) as slide_count
+                    FROM appareils a
+                    LEFT JOIN presentations p ON a.presentation_defaut_id = p.id
+                    LEFT JOIN presentation_medias pm ON p.id = pm.presentation_id
+                    WHERE a.identifiant_unique = ? 
+                    AND a.presentation_defaut_id > 0
+                    AND p.statut = 'actif'
+                    GROUP BY a.id, p.id
+                ");
+                $stmt->execute([$deviceId]);
+                $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($result && $result['presentation_defaut_id'] > 0 && $result['presentation_id']) {
+                    $defaultPresentation = [
+                        'presentation_id' => (int)$result['presentation_id'],
+                        'presentation_name' => $result['presentation_name'],
+                        'presentation_description' => $result['presentation_description'] ?: 'Présentation par défaut',
+                        'slide_count' => (int)($result['slide_count'] ?: 0),
+                        'is_default' => true
+                    ];
+                    
+                    logError("Default presentation found", ['default_presentation' => $defaultPresentation]);
+                    jsonResponse(['default_presentation' => $defaultPresentation]);
+                } else {
+                    logError("No default presentation", ['device_id' => $deviceId]);
+                    jsonResponse(['default_presentation' => null]);
+                }
+                
+            } catch (PDOException $e) {
+                logError("Database error in default presentation", ['error' => $e->getMessage()]);
+                jsonResponse(['error' => 'Erreur base de données'], 500);
+            }
+        } else {
+            jsonResponse(['error' => 'Méthode non autorisée'], 405);
+        }
+        break;
+
     default:
         // Vérifier si c'est une requête de présentation spécifique
         if (preg_match('/^presentation\/(\d+)$/', $path, $matches)) {
@@ -317,8 +564,15 @@ switch ($path) {
                     'GET /' => 'Informations API',
                     'GET /version' => 'Version API',
                     'GET /presentations' => 'Liste des présentations',
-                    'GET /presentation/{id}' => 'Détails présentation'
+                    'GET /presentation/{id}' => 'Détails présentation',
+                    'POST /device/register' => 'Register a device',
+                    'POST /appareil/enregistrer' => 'Enregistrer appareil (alias)',
+                    'GET /device/assigned-presentation' => 'Get assigned presentation for device',
+                    'GET /appareil/presentation-assignee' => 'Présentation assignée (alias)',
+                    'GET /device/default-presentation' => 'Get default presentation for device',
+                    'GET /appareil/presentation-defaut' => 'Présentation par défaut (alias)'
                 ]
             ], 404);
         }
 }
+?>

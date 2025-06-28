@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
 // Définition des clés de stockage
 const STORAGE_KEYS = {
@@ -1000,7 +1001,13 @@ class ApiService {
       console.log('=== DEVICE INFO TO REGISTER ===');
       console.log('Device info:', deviceInfo);
 
-      const endpoint = this.getEndpoint('/device/register');
+      // IMPORTANT: Utiliser l'endpoint correct selon le type d'API
+      // Pour affichageDynamique, c'est /appareil/enregistrer
+      // Pour standard, c'est /device/register
+      const endpoint = this.apiType === 'affichageDynamique' 
+        ? '/appareil/enregistrer' 
+        : '/device/register';
+        
       console.log('Using registration endpoint:', endpoint);
 
       const response = await this.makeRequest<ApiResponse<any>>(endpoint, {
