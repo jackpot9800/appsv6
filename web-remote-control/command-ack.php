@@ -5,6 +5,9 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type');
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -64,20 +67,23 @@ if (!$commande) {
     exit;
 }
 
-// Mettre à jour le statut de la commande
+// Mettre à jour le statut de la commande avec le fuseau horaire correct
 try {
+    // Utiliser l'heure locale correcte
+    $currentTime = date('Y-m-d H:i:s');
+    
     $stmt = $dbpdointranet->prepare("
         UPDATE commandes_distantes 
-        SET statut = ?, date_execution = NOW(), resultat_execution = ?
+        SET statut = ?, date_execution = ?, resultat_execution = ?
         WHERE id = ? AND identifiant_appareil = ?
     ");
-    $stmt->execute([$status, $result, $commandId, $deviceId]);
+    $stmt->execute([$status, $currentTime, $result, $commandId, $deviceId]);
 
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, identifiant_appareil, message, details, adresse_ip)
-        VALUES ('commande_distante', ?, ?, ?, ?)
+        (type_action, identifiant_appareil, message, details, adresse_ip, date_action)
+        VALUES ('commande_distante', ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
         $deviceId,
@@ -88,16 +94,18 @@ try {
             'status' => $status,
             'result' => $result
         ]),
-        $_SERVER['REMOTE_ADDR'] ?? ''
+        $_SERVER['REMOTE_ADDR'] ?? '',
+        $currentTime // Utiliser l'heure locale correcte
     ]);
 
     echo json_encode([
         'success' => true, 
-        'message' => 'Statut de la commande mis à jour'
+        'message' => 'Statut de la commande mis à jour',
+        'server_time' => $currentTime // Renvoyer l'heure du serveur pour synchronisation
     ]);
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Erreur lors de la mise à jour du statut de la commande']);
+    echo json_encode(['error' => 'Erreur lors de la mise à jour du statut de la commande: ' . $e->getMessage()]);
     exit;
 }
 ?>

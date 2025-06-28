@@ -5,6 +5,9 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type');
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -75,12 +78,15 @@ if (!$appareil) {
     $appareilId = $appareil['id'];
 }
 
-// Mettre à jour le statut de l'appareil
+// Mettre à jour le statut de l'appareil avec le fuseau horaire correct
 try {
+    // Utiliser NOW() avec le fuseau horaire correct
+    $currentTime = date('Y-m-d H:i:s');
+    
     $stmt = $dbpdointranet->prepare("
         UPDATE appareils 
         SET 
-            derniere_connexion = NOW(),
+            derniere_connexion = ?,
             statut_temps_reel = ?,
             presentation_courante_id = ?,
             presentation_courante_nom = ?,
@@ -93,11 +99,18 @@ try {
             force_wifi = ?,
             version_app = ?,
             message_erreur = ?,
-            adresse_ip = ?
+            adresse_ip = ?,
+            adresse_ip_externe = ?,
+            adresse_ip_locale = ?
         WHERE identifiant_unique = ?
     ");
 
+    // Récupérer l'adresse IP externe et locale
+    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
+    $localIP = $data['local_ip'] ?? null;
+
     $stmt->execute([
+        $currentTime, // Utiliser l'heure locale correcte
         $data['status'] ?? 'online',
         $data['current_presentation_id'] ?? null,
         $data['current_presentation_name'] ?? null,
@@ -111,20 +124,23 @@ try {
         $data['app_version'] ?? null,
         $data['error_message'] ?? null,
         $_SERVER['REMOTE_ADDR'] ?? '',
+        $externalIP,
+        $localIP,
         $deviceId
     ]);
 
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip)
-        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?)
+        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, date_action)
+        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?)
     ");
     $stmt->execute([
         $appareilId,
         $deviceId,
         json_encode($data),
-        $_SERVER['REMOTE_ADDR'] ?? ''
+        $_SERVER['REMOTE_ADDR'] ?? '',
+        $currentTime // Utiliser l'heure locale correcte
     ]);
 
     // Réponse avec les commandes en attente
@@ -140,11 +156,12 @@ try {
     echo json_encode([
         'success' => true, 
         'message' => 'Heartbeat reçu',
+        'server_time' => $currentTime, // Renvoyer l'heure du serveur pour synchronisation
         'commands' => $commandes
     ]);
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Erreur lors de la mise à jour du statut']);
+    echo json_encode(['error' => 'Erreur lors de la mise à jour du statut: ' . $e->getMessage()]);
     exit;
 }
 ?>

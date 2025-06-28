@@ -1,6 +1,9 @@
 <?php
 // dashboard.php - Tableau de bord pour la gestion des appareils Fire TV
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Configuration de la base de données
 require_once('dbpdointranet.php');
 $dbpdointranet->exec("USE affichageDynamique");
@@ -120,6 +123,11 @@ $presentations_populaires = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <i class="fas fa-tv mr-2"></i>
                     Liste des appareils
                 </a>
+                
+                <a href="timezone-test.php" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-clock mr-2"></i>
+                    Test fuseau horaire
+                </a>
             </div>
         </div>
 
@@ -203,8 +211,9 @@ $presentations_populaires = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <p class="font-medium text-gray-800"><?= htmlspecialchars($appareil['nom']) ?></p>
                                 <p class="text-xs text-gray-500">
                                     <?php
-                                    $time = new DateTime($appareil['derniere_connexion']);
-                                    echo $time->format('H:i:s');
+                                    // Convertir en heure locale pour l'affichage
+                                    $time = convertToLocalTime($appareil['derniere_connexion']);
+                                    echo date('d/m/Y H:i:s', strtotime($time));
                                     ?>
                                 </p>
                             </div>
@@ -285,7 +294,7 @@ $presentations_populaires = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     </span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    <?= date('d/m H:i:s', strtotime($commande['date_creation'])) ?>
+                                    <?= date('d/m H:i:s', strtotime(convertToLocalTime($commande['date_creation']))) ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -332,6 +341,42 @@ $presentations_populaires = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <p>Aucune présentation active</p>
                     </div>
                     <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Information sur le fuseau horaire -->
+        <div class="mt-8 bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-clock text-blue-600"></i>
+                Informations sur le fuseau horaire
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="font-medium text-gray-700 mb-2">Configuration actuelle</h3>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li><strong>Fuseau horaire PHP :</strong> <?= date_default_timezone_get() ?></li>
+                        <li><strong>Heure PHP locale :</strong> <?= date('Y-m-d H:i:s') ?></li>
+                        <li><strong>Heure PHP UTC :</strong> <?= gmdate('Y-m-d H:i:s') ?></li>
+                        <?php
+                        $stmt = $dbpdointranet->query("SELECT @@session.time_zone, NOW()");
+                        $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
+                        ?>
+                        <li><strong>Fuseau horaire MySQL :</strong> <?= $tzInfo['@@session.time_zone'] ?></li>
+                        <li><strong>Heure MySQL :</strong> <?= $tzInfo['NOW()'] ?></li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h3 class="font-medium text-gray-700 mb-2">Modifier le fuseau horaire</h3>
+                    <p class="text-sm text-gray-600 mb-4">
+                        Si l'heure affichée n'est pas correcte, vous pouvez modifier le fuseau horaire du système.
+                    </p>
+                    <a href="update-timezone.php" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg inline-block">
+                        <i class="fas fa-cog mr-2"></i>
+                        Configurer le fuseau horaire
+                    </a>
                 </div>
             </div>
         </div>

@@ -17,6 +17,7 @@ export interface DeviceStatus {
   wifi_strength?: number;
   app_version?: string;
   error_message?: string;
+  local_ip?: string; // Ajout de l'adresse IP locale
 }
 
 export interface RemoteCommand {
@@ -36,6 +37,7 @@ class StatusService {
   private currentStatus: DeviceStatus | null = null;
   private onStatusUpdateCallback: ((status: DeviceStatus) => void) | null = null;
   private onRemoteCommandCallback: ((command: RemoteCommand) => void) | null = null;
+  private localIpAddress: string | null = null;
 
   async initialize() {
     console.log('=== INITIALIZING STATUS SERVICE ===');
@@ -45,6 +47,28 @@ class StatusService {
     
     // Vérifier les commandes à distance toutes les 10 secondes
     this.startCommandCheck();
+    
+    // Tenter de récupérer l'adresse IP locale
+    this.getLocalIPAddress();
+  }
+
+  /**
+   * Tente de récupérer l'adresse IP locale de l'appareil
+   */
+  private async getLocalIPAddress() {
+    try {
+      // Cette méthode est une approximation et peut ne pas fonctionner sur tous les appareils
+      // Pour une implémentation plus robuste, il faudrait utiliser des modules natifs
+      
+      // Méthode simplifiée pour simuler la récupération d'IP locale
+      // Dans une vraie implémentation, utilisez des modules comme react-native-network-info
+      this.localIpAddress = '192.168.1.X'; // Valeur simulée
+      
+      console.log('Local IP address:', this.localIpAddress);
+    } catch (error) {
+      console.log('Failed to get local IP address:', error);
+      this.localIpAddress = null;
+    }
   }
 
   /**
@@ -89,7 +113,7 @@ class StatusService {
 
       const status = await this.getCurrentStatus();
       
-      const response = await fetch(`${apiService.getServerUrl()}/appareil/heartbeat`, {
+      const response = await fetch(`${apiService.getServerUrl()}/heartbeat-receiver.php`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -99,7 +123,23 @@ class StatusService {
       });
 
       if (response.ok) {
+        const data = await response.json();
         console.log('Heartbeat sent successfully');
+        
+        // Synchroniser l'heure locale avec le serveur si disponible
+        if (data.server_time) {
+          console.log('Server time received:', data.server_time);
+          // Ici, vous pourriez ajuster l'heure locale si nécessaire
+        }
+        
+        // Traiter les commandes en attente
+        if (data.commands && data.commands.length > 0) {
+          console.log('Received commands:', data.commands.length);
+          for (const command of data.commands) {
+            await this.executeRemoteCommand(command);
+            await this.acknowledgeCommand(command.id);
+          }
+        }
       }
     } catch (error) {
       console.log('Failed to send heartbeat:', error);
@@ -156,12 +196,17 @@ class StatusService {
    */
   private async acknowledgeCommand(commandId: string) {
     try {
-      await fetch(`${apiService.getServerUrl()}/appareil/commandes/${commandId}/ack`, {
+      await fetch(`${apiService.getServerUrl()}/command-ack.php`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Device-ID': apiService.getDeviceId(),
         },
+        body: JSON.stringify({
+          command_id: commandId,
+          status: 'executee',
+          result: 'Command executed successfully'
+        }),
       });
     } catch (error) {
       console.log('Failed to acknowledge command:', error);
@@ -193,6 +238,7 @@ class StatusService {
       wifi_strength: systemInfo.wifiStrength,
       app_version: appVersion,
       error_message: this.currentStatus?.error_message,
+      local_ip: this.localIpAddress || undefined, // Ajouter l'adresse IP locale
     };
 
     return status;
