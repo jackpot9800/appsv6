@@ -4,7 +4,10 @@
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type, X-Device-Name, X-Local-IP, X-External-IP');
+
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
 
 // Gestion des requêtes OPTIONS (preflight CORS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -42,11 +45,6 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 
 // Vérifier l'action demandée
 $action = $data['action'] ?? '';
-$device_id = $data['device_id'] ?? '';
-
-if (empty($device_id)) {
-    jsonResponse(['success' => false, 'message' => 'ID appareil requis'], 400);
-}
 
 // Connexion à la base de données
 try {
@@ -57,21 +55,17 @@ try {
     jsonResponse(['success' => false, 'message' => 'Erreur de connexion à la base de données'], 500);
 }
 
-// Vérifier que l'appareil existe
-$stmt = $dbpdointranet->prepare("SELECT id FROM appareils WHERE identifiant_unique = ?");
-$stmt->execute([$device_id]);
-$appareil = $stmt->fetch(PDO::FETCH_ASSOC);
-
-if (!$appareil) {
-    jsonResponse(['success' => false, 'message' => 'Appareil non trouvé'], 404);
-}
-
 // Traiter l'action demandée
 switch ($action) {
     case 'send_command':
         // Envoyer une commande à l'appareil
+        $deviceId = $data['device_id'] ?? '';
         $command = $data['command'] ?? '';
         $parameters = $data['parameters'] ?? [];
+        
+        if (empty($deviceId)) {
+            jsonResponse(['success' => false, 'message' => 'ID appareil requis'], 400);
+        }
         
         if (empty($command)) {
             jsonResponse(['success' => false, 'message' => 'Commande requise'], 400);
@@ -92,18 +86,28 @@ switch ($action) {
             jsonResponse(['success' => false, 'message' => 'ID de présentation requis'], 400);
         }
         
+        // Vérifier que l'appareil existe
+        $stmt = $dbpdointranet->prepare("SELECT id, adresse_ip, adresse_ip_externe FROM appareils WHERE identifiant_unique = ?");
+        $stmt->execute([$deviceId]);
+        $appareil = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$appareil) {
+            jsonResponse(['success' => false, 'message' => 'Appareil non trouvé'], 404);
+        }
+        
         try {
             // Insérer la commande dans la base de données
             $stmt = $dbpdointranet->prepare("
                 INSERT INTO commandes_distantes 
-                (identifiant_appareil, commande, parametres, statut, date_creation)
-                VALUES (?, ?, ?, 'en_attente', NOW())
+                (identifiant_appareil, commande, parametres, statut, date_creation, adresse_ip_cible)
+                VALUES (?, ?, ?, 'en_attente', NOW(), ?)
             ");
             
             $stmt->execute([
-                $device_id,
+                $deviceId,
                 $command,
-                json_encode($parameters)
+                json_encode($parameters),
+                $appareil['adresse_ip_externe'] ?? $appareil['adresse_ip'] ?? null
             ]);
             
             $command_id = $dbpdointranet->lastInsertId();
@@ -111,13 +115,13 @@ switch ($action) {
             // Enregistrer un log d'activité
             $stmt = $dbpdointranet->prepare("
                 INSERT INTO logs_activite 
-                (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, user_agent)
-                VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
+                (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+                VALUES ('commande_distante', ?, ?, ?, ?, ?, ?, NOW())
             ");
             
             $stmt->execute([
                 $appareil['id'],
-                $device_id,
+                $deviceId,
                 "Commande distante envoyée: {$command}",
                 json_encode([
                     'command' => $command,
@@ -125,7 +129,7 @@ switch ($action) {
                     'command_id' => $command_id
                 ]),
                 $_SERVER['REMOTE_ADDR'] ?? '',
-                $_SERVER['HTTP_USER_AGENT'] ?? ''
+                $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''
             ]);
             
             jsonResponse([
@@ -142,6 +146,12 @@ switch ($action) {
         
     case 'get_status':
         // Récupérer le statut de l'appareil
+        $deviceId = $data['device_id'] ?? '';
+        
+        if (empty($deviceId)) {
+            jsonResponse(['success' => false, 'message' => 'ID appareil requis'], 400);
+        }
+        
         try {
             $stmt = $dbpdointranet->prepare("
                 SELECT 
@@ -151,11 +161,16 @@ switch ($action) {
                 LEFT JOIN presentations p ON a.presentation_courante_id = p.id
                 WHERE a.identifiant_unique = ?
             ");
-            $stmt->execute([$device_id]);
+            $stmt->execute([$deviceId]);
             $appareil = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if (!$appareil) {
                 jsonResponse(['success' => false, 'message' => 'Appareil non trouvé'], 404);
+            }
+            
+            // Convertir les dates en heure locale
+            if ($appareil['derniere_connexion']) {
+                $appareil['derniere_connexion'] = convertToLocalTime($appareil['derniere_connexion']);
             }
             
             // Déterminer le statut de connexion
@@ -174,7 +189,7 @@ switch ($action) {
                         SET statut_temps_reel = 'offline' 
                         WHERE identifiant_unique = ?
                     ");
-                    $stmt->execute([$device_id]);
+                    $stmt->execute([$deviceId]);
                 }
             }
             
@@ -191,6 +206,12 @@ switch ($action) {
         
     case 'get_command_history':
         // Récupérer l'historique des commandes
+        $deviceId = $data['device_id'] ?? '';
+        
+        if (empty($deviceId)) {
+            jsonResponse(['success' => false, 'message' => 'ID appareil requis'], 400);
+        }
+        
         try {
             $stmt = $dbpdointranet->prepare("
                 SELECT * FROM commandes_distantes 
@@ -198,8 +219,16 @@ switch ($action) {
                 ORDER BY date_creation DESC 
                 LIMIT 10
             ");
-            $stmt->execute([$device_id]);
+            $stmt->execute([$deviceId]);
             $commandes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Convertir les dates en heure locale
+            foreach ($commandes as &$commande) {
+                $commande['date_creation'] = convertToLocalTime($commande['date_creation']);
+                if ($commande['date_execution']) {
+                    $commande['date_execution'] = convertToLocalTime($commande['date_execution']);
+                }
+            }
             
             jsonResponse([
                 'success' => true,
@@ -214,18 +243,32 @@ switch ($action) {
         
     case 'assign_presentation':
         // Assigner une présentation à l'appareil
-        $presentation_id = $data['presentation_id'] ?? 0;
-        $auto_play = $data['auto_play'] ?? true;
-        $loop_mode = $data['loop_mode'] ?? true;
+        $deviceId = $data['device_id'] ?? '';
+        $presentationId = $data['presentation_id'] ?? 0;
+        $autoPlay = $data['auto_play'] ?? true;
+        $loopMode = $data['loop_mode'] ?? true;
         
-        if (empty($presentation_id)) {
+        if (empty($deviceId)) {
+            jsonResponse(['success' => false, 'message' => 'ID appareil requis'], 400);
+        }
+        
+        if (empty($presentationId)) {
             jsonResponse(['success' => false, 'message' => 'ID de présentation requis'], 400);
         }
         
         try {
+            // Vérifier que l'appareil existe
+            $stmt = $dbpdointranet->prepare("SELECT id, adresse_ip, adresse_ip_externe FROM appareils WHERE identifiant_unique = ?");
+            $stmt->execute([$deviceId]);
+            $appareil = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$appareil) {
+                jsonResponse(['success' => false, 'message' => 'Appareil non trouvé'], 404);
+            }
+            
             // Vérifier que la présentation existe
             $stmt = $dbpdointranet->prepare("SELECT id FROM presentations WHERE id = ?");
-            $stmt->execute([$presentation_id]);
+            $stmt->execute([$presentationId]);
             if (!$stmt->fetch()) {
                 jsonResponse(['success' => false, 'message' => 'Présentation non trouvée'], 404);
             }
@@ -244,27 +287,31 @@ switch ($action) {
             ");
             
             $stmt->execute([
-                $presentation_id,
+                $presentationId,
                 $appareil['id'],
-                $device_id,
-                $auto_play ? 1 : 0,
-                $loop_mode ? 1 : 0
+                $deviceId,
+                $autoPlay ? 1 : 0,
+                $loopMode ? 1 : 0
             ]);
             
             // Envoyer une commande pour lancer la présentation
             $stmt = $dbpdointranet->prepare("
                 INSERT INTO commandes_distantes 
-                (identifiant_appareil, commande, parametres, statut, date_creation)
-                VALUES (?, 'assign_presentation', ?, 'en_attente', NOW())
+                (identifiant_appareil, commande, parametres, statut, date_creation, adresse_ip_cible)
+                VALUES (?, 'assign_presentation', ?, 'en_attente', NOW(), ?)
             ");
             
             $parameters = json_encode([
-                'presentation_id' => (int)$presentation_id,
-                'auto_play' => (bool)$auto_play,
-                'loop_mode' => (bool)$loop_mode
+                'presentation_id' => (int)$presentationId,
+                'auto_play' => (bool)$autoPlay,
+                'loop_mode' => (bool)$loopMode
             ]);
             
-            $stmt->execute([$device_id, $parameters]);
+            $stmt->execute([
+                $deviceId, 
+                $parameters,
+                $appareil['adresse_ip_externe'] ?? $appareil['adresse_ip'] ?? null
+            ]);
             
             jsonResponse([
                 'success' => true,
@@ -277,6 +324,93 @@ switch ($action) {
         }
         break;
         
+    case 'send_command_to_group':
+        // Envoyer une commande à tous les appareils d'un groupe (même IP externe)
+        $externalIP = $data['external_ip'] ?? '';
+        $command = $data['command'] ?? '';
+        $parameters = $data['parameters'] ?? [];
+        
+        if (empty($externalIP)) {
+            jsonResponse(['success' => false, 'message' => 'Adresse IP externe requise'], 400);
+        }
+        
+        if (empty($command)) {
+            jsonResponse(['success' => false, 'message' => 'Commande requise'], 400);
+        }
+        
+        // Valider la commande
+        $valid_commands = ['play', 'pause', 'stop', 'restart', 'reboot'];
+        if (!in_array($command, $valid_commands)) {
+            jsonResponse(['success' => false, 'message' => 'Commande invalide pour un groupe'], 400);
+        }
+        
+        try {
+            // Récupérer tous les appareils avec cette IP externe
+            $stmt = $dbpdointranet->prepare("
+                SELECT id, identifiant_unique, nom 
+                FROM appareils 
+                WHERE adresse_ip_externe = ? 
+                AND statut = 'actif'
+            ");
+            $stmt->execute([$externalIP]);
+            $appareils = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            if (count($appareils) === 0) {
+                jsonResponse(['success' => false, 'message' => 'Aucun appareil trouvé avec cette IP externe'], 404);
+            }
+            
+            // Envoyer la commande à chaque appareil
+            $commandsCount = 0;
+            foreach ($appareils as $appareil) {
+                $stmt = $dbpdointranet->prepare("
+                    INSERT INTO commandes_distantes 
+                    (identifiant_appareil, commande, parametres, statut, date_creation, adresse_ip_cible)
+                    VALUES (?, ?, ?, 'en_attente', NOW(), ?)
+                ");
+                
+                $stmt->execute([
+                    $appareil['identifiant_unique'],
+                    $command,
+                    json_encode($parameters),
+                    $externalIP
+                ]);
+                
+                $commandsCount++;
+            }
+            
+            // Enregistrer un log d'activité
+            $stmt = $dbpdointranet->prepare("
+                INSERT INTO logs_activite 
+                (type_action, message, details, adresse_ip, adresse_ip_externe, date_action)
+                VALUES ('commande_distante', ?, ?, ?, ?, NOW())
+            ");
+            
+            $stmt->execute([
+                "Commande groupée envoyée: {$command} à {$commandsCount} appareil(s)",
+                json_encode([
+                    'command' => $command,
+                    'parameters' => $parameters,
+                    'external_ip' => $externalIP,
+                    'devices_count' => $commandsCount,
+                    'devices' => array_column($appareils, 'nom')
+                ]),
+                $_SERVER['REMOTE_ADDR'] ?? '',
+                $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''
+            ]);
+            
+            jsonResponse([
+                'success' => true, 
+                'message' => "Commande {$command} envoyée à {$commandsCount} appareil(s)",
+                'devices_count' => $commandsCount
+            ]);
+            
+        } catch (Exception $e) {
+            logError('Erreur lors de l\'envoi de la commande groupée', ['error' => $e->getMessage()]);
+            jsonResponse(['success' => false, 'message' => 'Erreur lors de l\'envoi de la commande groupée'], 500);
+        }
+        break;
+        
     default:
         jsonResponse(['success' => false, 'message' => 'Action non reconnue'], 400);
 }
+?>

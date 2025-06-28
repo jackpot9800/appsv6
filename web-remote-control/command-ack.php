@@ -3,7 +3,7 @@
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type, X-Device-Name, X-Local-IP, X-External-IP');
 
 // Inclure la configuration du fuseau horaire
 require_once('timezone-config.php');
@@ -41,6 +41,16 @@ if (empty($deviceId) || empty($commandId)) {
     http_response_code(400);
     echo json_encode(['error' => 'ID appareil et ID commande requis']);
     exit;
+}
+
+// Récupérer les informations supplémentaires des headers
+$deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
+$localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
+$externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
+
+// Si pas d'IP externe dans les headers, utiliser l'IP de la requête
+if (empty($externalIP)) {
+    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
 }
 
 // Connexion à la base de données
@@ -82,8 +92,8 @@ try {
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, identifiant_appareil, message, details, adresse_ip, date_action)
-        VALUES ('commande_distante', ?, ?, ?, ?, ?)
+        (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+        VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
         $deviceId,
@@ -92,9 +102,13 @@ try {
             'command_id' => $commandId,
             'command' => $commande['commande'],
             'status' => $status,
-            'result' => $result
+            'result' => $result,
+            'local_ip' => $localIP,
+            'external_ip' => $externalIP,
+            'device_name' => $deviceName
         ]),
         $_SERVER['REMOTE_ADDR'] ?? '',
+        $externalIP,
         $currentTime // Utiliser l'heure locale correcte
     ]);
 

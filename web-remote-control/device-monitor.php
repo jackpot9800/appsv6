@@ -1,6 +1,9 @@
 <?php
 // device-monitor.php - Interface de surveillance en temps réel des appareils
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Configuration de la base de données
 require_once('dbpdointranet.php');
 $dbpdointranet->exec("USE affichageDynamique");
@@ -37,6 +40,21 @@ $stmt = $dbpdointranet->query("
     ORDER BY a.derniere_connexion ASC
 ");
 $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Récupérer les appareils par adresse IP externe
+$stmt = $dbpdointranet->query("
+    SELECT 
+        adresse_ip_externe,
+        COUNT(*) as nombre_appareils,
+        GROUP_CONCAT(nom SEPARATOR ', ') as noms_appareils,
+        SUM(CASE WHEN derniere_connexion > DATE_SUB(NOW(), INTERVAL 10 MINUTE) THEN 1 ELSE 0 END) as appareils_en_ligne
+    FROM appareils
+    WHERE adresse_ip_externe IS NOT NULL
+    GROUP BY adresse_ip_externe
+    HAVING COUNT(*) > 1
+    ORDER BY nombre_appareils DESC
+");
+$groupes_ip = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -156,6 +174,53 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
 
+        <!-- Groupes d'appareils par IP externe (OVH) -->
+        <?php if (count($groupes_ip) > 0): ?>
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-network-wired text-purple-600"></i>
+                Appareils partageant la même adresse IP externe
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <?php foreach ($groupes_ip as $groupe): ?>
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">
+                            <i class="fas fa-globe mr-2 text-purple-500"></i>
+                            IP: <?= htmlspecialchars($groupe['adresse_ip_externe']) ?>
+                        </h3>
+                        <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                            <?= $groupe['nombre_appareils'] ?> appareils
+                        </span>
+                    </div>
+                    
+                    <div class="mb-2">
+                        <div class="flex items-center">
+                            <span class="status-indicator <?= $groupe['appareils_en_ligne'] > 0 ? 'status-online' : 'status-offline' ?>"></span>
+                            <span class="text-sm font-medium">
+                                <?= $groupe['appareils_en_ligne'] ?> en ligne / <?= $groupe['nombre_appareils'] ?> total
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <p class="text-sm text-gray-600 mb-4">
+                        <?= htmlspecialchars($groupe['noms_appareils']) ?>
+                    </p>
+                    
+                    <div class="flex justify-end">
+                        <button onclick="sendCommandToGroup('<?= htmlspecialchars($groupe['adresse_ip_externe']) ?>')" 
+                                class="text-blue-500 hover:text-blue-700 text-sm">
+                            <i class="fas fa-terminal mr-1"></i>
+                            Envoyer commande groupée
+                        </button>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Graphique de statut -->
             <div class="device-card bg-white rounded-lg shadow-lg p-6 lg:col-span-2">
@@ -186,6 +251,9 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                         <p class="font-medium text-gray-800"><?= htmlspecialchars($appareil['nom']) ?></p>
                                         <p class="text-xs text-gray-500">
                                             Hors ligne depuis <?= $appareil['minutes_offline'] ?> minutes
+                                        </p>
+                                        <p class="text-xs text-gray-500">
+                                            IP: <?= htmlspecialchars($appareil['adresse_ip_externe'] ?? $appareil['adresse_ip'] ?? 'Inconnue') ?>
                                         </p>
                                     </div>
                                 </div>
@@ -232,10 +300,10 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     Dernière connexion
                                 </th>
                                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    Mémoire
+                                    IP Externe
                                 </th>
                                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    WiFi
+                                    IP Locale
                                 </th>
                                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Actions
@@ -373,23 +441,11 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             ${device.derniere_connexion_formatee}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            ${device.utilisation_memoire ? 
-                                `<div class="w-24 bg-gray-200 rounded-full h-2.5">
-                                    <div class="bg-blue-600 h-2.5 rounded-full" style="width: ${device.utilisation_memoire}%"></div>
-                                </div>
-                                <span class="text-xs text-gray-500">${device.utilisation_memoire}%</span>` : 
-                                '<span class="text-xs text-gray-500">-</span>'
-                            }
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            ${device.adresse_ip_externe || 'N/A'}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            ${device.force_wifi ? 
-                                `<div class="w-24 bg-gray-200 rounded-full h-2.5">
-                                    <div class="bg-green-600 h-2.5 rounded-full" style="width: ${device.force_wifi}%"></div>
-                                </div>
-                                <span class="text-xs text-gray-500">${device.force_wifi}%</span>` : 
-                                '<span class="text-xs text-gray-500">-</span>'
-                            }
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            ${device.adresse_ip_locale || 'N/A'}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <div class="flex space-x-2">
@@ -515,6 +571,9 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                         Math.floor(device.secondes_depuis_derniere_connexion / 60) + ' minutes' : 
                                         device.secondes_depuis_derniere_connexion + ' secondes'}
                                 </p>
+                                <p class="text-xs text-gray-500">
+                                    IP: ${device.adresse_ip_externe || device.adresse_ip || 'Inconnue'}
+                                </p>
                             </div>
                         </div>
                         
@@ -550,6 +609,45 @@ $appareils_hors_ligne = $stmt->fetchAll(PDO::FETCH_ASSOC);
             } catch (error) {
                 console.error('Erreur lors du redémarrage:', error);
                 showNotification('Erreur de connexion', 'Impossible d\'envoyer la commande de redémarrage', 'error');
+            }
+        }
+        
+        // Envoyer une commande à un groupe d'appareils partageant la même IP externe
+        async function sendCommandToGroup(externalIP) {
+            const command = prompt('Entrez la commande à envoyer à tous les appareils de ce groupe (play, pause, stop, restart, reboot):');
+            
+            if (!command) return;
+            
+            if (!['play', 'pause', 'stop', 'restart', 'reboot'].includes(command)) {
+                alert('Commande non valide. Utilisez play, pause, stop, restart ou reboot.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('remote-control-api.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'send_command_to_group',
+                        external_ip: externalIP,
+                        command: command
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('Commande groupée', `Commande "${command}" envoyée à ${data.devices_count} appareil(s)`, 'success');
+                    // Recharger les données après un court délai
+                    setTimeout(loadDevicesData, 2000);
+                } else {
+                    showNotification('Erreur', data.message, 'error');
+                }
+            } catch (error) {
+                console.error('Erreur lors de l\'envoi de la commande groupée:', error);
+                showNotification('Erreur de connexion', 'Impossible d\'envoyer la commande groupée', 'error');
             }
         }
         

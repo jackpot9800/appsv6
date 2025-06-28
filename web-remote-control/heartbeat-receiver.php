@@ -3,7 +3,7 @@
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Device-ID, X-Device-Type, X-Device-Name, X-Local-IP, X-External-IP');
 
 // Inclure la configuration du fuseau horaire
 require_once('timezone-config.php');
@@ -39,6 +39,16 @@ if (empty($deviceId)) {
     exit;
 }
 
+// Récupérer les informations supplémentaires des headers
+$deviceName = $_SERVER['HTTP_X_DEVICE_NAME'] ?? null;
+$localIP = $_SERVER['HTTP_X_LOCAL_IP'] ?? null;
+$externalIP = $_SERVER['HTTP_X_EXTERNAL_IP'] ?? null;
+
+// Si pas d'IP externe dans les headers, utiliser l'IP de la requête
+if (empty($externalIP)) {
+    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
+}
+
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
@@ -59,19 +69,25 @@ if (!$appareil) {
     try {
         $stmt = $dbpdointranet->prepare("
             INSERT INTO appareils 
-            (nom, type_appareil, identifiant_unique, adresse_ip, date_enregistrement, statut)
-            VALUES (?, ?, ?, ?, NOW(), 'actif')
+            (nom, type_appareil, identifiant_unique, adresse_ip, adresse_ip_externe, adresse_ip_locale, date_enregistrement, statut)
+            VALUES (?, ?, ?, ?, ?, ?, NOW(), 'actif')
         ");
         
-        $deviceName = $data['device_name'] ?? 'Fire TV ' . substr($deviceId, -6);
         $deviceType = $data['device_type'] ?? 'firetv';
         $ipAddress = $_SERVER['REMOTE_ADDR'] ?? '';
         
-        $stmt->execute([$deviceName, $deviceType, $deviceId, $ipAddress]);
+        $stmt->execute([
+            $deviceName ?? 'Fire TV ' . substr($deviceId, -6),
+            $deviceType,
+            $deviceId,
+            $ipAddress,
+            $externalIP,
+            $localIP
+        ]);
         $appareilId = $dbpdointranet->lastInsertId();
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Erreur lors de l\'enregistrement de l\'appareil']);
+        echo json_encode(['error' => 'Erreur lors de l\'enregistrement de l\'appareil: ' . $e->getMessage()]);
         exit;
     }
 } else {
@@ -101,13 +117,10 @@ try {
             message_erreur = ?,
             adresse_ip = ?,
             adresse_ip_externe = ?,
-            adresse_ip_locale = ?
+            adresse_ip_locale = ?,
+            nom = COALESCE(?, nom)
         WHERE identifiant_unique = ?
     ");
-
-    // Récupérer l'adresse IP externe et locale
-    $externalIP = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? null;
-    $localIP = $data['local_ip'] ?? null;
 
     $stmt->execute([
         $currentTime, // Utiliser l'heure locale correcte
@@ -126,20 +139,28 @@ try {
         $_SERVER['REMOTE_ADDR'] ?? '',
         $externalIP,
         $localIP,
+        $deviceName,
         $deviceId
     ]);
 
     // Enregistrer un log d'activité
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
-        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, date_action)
-        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?)
+        (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
+        VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?, ?)
     ");
     $stmt->execute([
         $appareilId,
         $deviceId,
-        json_encode($data),
+        json_encode([
+            'status' => $data['status'] ?? 'online',
+            'current_presentation' => $data['current_presentation_name'] ?? null,
+            'local_ip' => $localIP,
+            'external_ip' => $externalIP,
+            'device_name' => $deviceName
+        ]),
         $_SERVER['REMOTE_ADDR'] ?? '',
+        $externalIP,
         $currentTime // Utiliser l'heure locale correcte
     ]);
 
@@ -148,16 +169,33 @@ try {
         SELECT * FROM commandes_distantes 
         WHERE identifiant_appareil = ? 
         AND statut = 'en_attente'
-        ORDER BY date_creation ASC
+        ORDER BY priorite DESC, date_creation ASC
+        LIMIT 5
     ");
     $stmt->execute([$deviceId]);
     $commandes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Mettre à jour les tentatives pour ces commandes
+    if (!empty($commandes)) {
+        $commandIds = array_column($commandes, 'id');
+        $placeholders = implode(',', array_fill(0, count($commandIds), '?'));
+        
+        $stmt = $dbpdointranet->prepare("
+            UPDATE commandes_distantes 
+            SET tentatives = tentatives + 1, derniere_tentative = NOW()
+            WHERE id IN ($placeholders)
+        ");
+        $stmt->execute($commandIds);
+    }
 
     echo json_encode([
         'success' => true, 
         'message' => 'Heartbeat reçu',
         'server_time' => $currentTime, // Renvoyer l'heure du serveur pour synchronisation
-        'commands' => $commandes
+        'commands' => $commandes,
+        'device_id' => $deviceId,
+        'external_ip' => $externalIP,
+        'local_ip' => $localIP
     ]);
 } catch (Exception $e) {
     http_response_code(500);
