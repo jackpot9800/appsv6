@@ -4,7 +4,7 @@
 
 // Définir le fuseau horaire par défaut pour l'application
 // Remplacez 'Europe/Paris' par votre fuseau horaire si différent
-date_default_timezone_set('Europe/Paris');
+date_default_timezone_set('America/New_York');
 
 // Fonction pour convertir une date/heure UTC en fuseau horaire local
 function convertToLocalTime($utcTime, $format = 'Y-m-d H:i:s') {

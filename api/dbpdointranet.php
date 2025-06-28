@@ -1,6 +1,9 @@
 <?php
 // dbpdointranet.php - Fichier de connexion à la base de données
 
+// Inclure la configuration du fuseau horaire
+require_once('timezone-config.php');
+
 // Paramètres de connexion à la base de données
 $db_host = 'localhost';  // Adresse du serveur MySQL
 $db_user = 'root';       // Nom d'utilisateur MySQL
@@ -17,7 +20,7 @@ try {
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
-            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci; SET time_zone = '+01:00';" // Configuration du fuseau horaire MySQL
         ]
     );
     
