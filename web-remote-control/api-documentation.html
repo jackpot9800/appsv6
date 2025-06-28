@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation API - Contrôle à distance Fire TV</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <style>
+        pre[class*="language-"] {
+            border-radius: 0.5rem;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">
+                <i class="fas fa-code text-blue-600"></i>
+                Documentation API - Contrôle à distance Fire TV
+            </h1>
+            
+            <div class="flex space-x-4">
+                <a href="dashboard.php" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-tachometer-alt mr-2"></i>
+                    Tableau de bord
+                </a>
+                
+                <a href="device-list.php" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-tv mr-2"></i>
+                    Liste des appareils
+                </a>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <div class="prose max-w-none">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Introduction</h2>
+                <p class="mb-4">
+                    Cette API permet de contrôler à distance les appareils Fire TV exécutant l'application Presentation Kiosk.
+                    Elle offre des fonctionnalités pour surveiller l'état des appareils, envoyer des commandes et gérer les présentations.
+                </p>
+
+                <h2 class="text-2xl font-bold text-gray-800 mt-8 mb-4">Points d'entrée API</h2>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">1. Contrôle à distance</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4">
+                        <code class="text-sm font-mono">POST /remote-control-api.php</code>
+                    </div>
+                    <p class="mb-4">
+                        Permet d'envoyer des commandes aux appareils et de récupérer leur statut.
+                    </p>
+                </div>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">2. Surveillance des appareils</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4">
+                        <code class="text-sm font-mono">GET /status-monitor.php?action=get_all_devices</code>
+                    </div>
+                    <p class="mb-4">
+                        Récupère le statut de tous les appareils enregistrés.
+                    </p>
+                </div>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">3. Réception des heartbeats</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4">
+                        <code class="text-sm font-mono">POST /heartbeat-receiver.php</code>
+                    </div>
+                    <p class="mb-4">
+                        Endpoint utilisé par les appareils pour envoyer leur statut périodiquement.
+                    </p>
+                </div>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">4. Confirmation des commandes</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4">
+                        <code class="text-sm font-mono">POST /command-ack.php</code>
+                    </div>
+                    <p class="mb-4">
+                        Endpoint utilisé par les appareils pour confirmer l'exécution des commandes.
+                    </p>
+                </div>
+
+                <h2 class="text-2xl font-bold text-gray-800 mt-8 mb-4">Exemples d'utilisation</h2>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">Envoyer une commande</h3>
+                    <pre><code class="language-javascript">// Exemple avec fetch
+async function sendCommand(deviceId, command, parameters = {}) {
+  const response = await fetch('remote-control-api.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'send_command',
+      device_id: deviceId,
+      command: command,
+      parameters: parameters
+    })
+  });
+  
+  return await response.json();
+}
+
+// Exemple d'utilisation
+sendCommand('firetv_abc123', 'play')
+  .then(result => console.log(result))
+  .catch(error => console.error(error));</code></pre>
+                </div>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">Récupérer le statut d'un appareil</h3>
+                    <pre><code class="language-javascript">// Exemple avec fetch
+async function getDeviceStatus(deviceId) {
+  const response = await fetch('remote-control-api.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'get_status',
+      device_id: deviceId
+    })
+  });
+  
+  return await response.json();
+}
+
+// Exemple d'utilisation
+getDeviceStatus('firetv_abc123')
+  .then(result => console.log(result.data))
+  .catch(error => console.error(error));</code></pre>
+                </div>
+                
+                <div class="mb-8">
+                    <h3 class="text-xl font-bold text-gray-700 mb-2">Assigner une présentation</h3>
+                    <pre><code class="language-javascript">// Exemple avec fetch
+async function assignPresentation(deviceId, presentationId, autoPlay = true, loopMode = true) {
+  const response = await fetch('remote-control-api.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action: 'assign_presentation',
+      device_id: deviceId,
+      presentation_id: presentationId,
+      auto_play: autoPlay,
+      loop_mode: loopMode
+    })
+  });
+  
+  return await response.json();
+}
+
+// Exemple d'utilisation
+assignPresentation('firetv_abc123', 5, true, true)
+  .then(result => console.log(result))
+  .catch(error => console.error(error));</code></pre>
+                </div>
+
+                <h2 class="text-2xl font-bold text-gray-800 mt-8 mb-4">Commandes disponibles</h2>
+                
+                <table class="min-w-full divide-y divide-gray-200 mb-8">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Commande
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Description
+                            </th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Paramètres
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">play</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Démarrer/reprendre la lecture</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">pause</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Mettre en pause</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">stop</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Arrêter et revenir à l'accueil</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">restart</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Redémarrer la présentation</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">next_slide</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Slide suivante</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">prev_slide</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Slide précédente</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">goto_slide</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aller à une slide spécifique</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <code>slide_index</code>: Index de la slide (commence à 0)
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">assign_presentation</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Assigner et lancer une présentation</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <code>presentation_id</code>: ID de la présentation<br>
+                                <code>auto_play</code>: Lecture automatique (true/false)<br>
+                                <code>loop_mode</code>: Mode boucle (true/false)
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">reboot</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Redémarrer l'appareil</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">update_app</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Mettre à jour l'application</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Aucun</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h2 class="text-2xl font-bold text-gray-800 mt-8 mb-4">Intégration dans l'application Fire TV</h2>
+                
+                <p class="mb-4">
+                    Pour que l'application Fire TV puisse communiquer avec cette API, vous devez implémenter les fonctionnalités suivantes :
+                </p>
+                
+                <h3 class="text-xl font-bold text-gray-700 mb-2">1. Envoi de heartbeats</h3>
+                <pre><code class="language-javascript">// Dans votre application React Native
+async function sendHeartbeat() {
+  try {
+    const status = {
+      status: isPlaying ? 'playing' : 'paused', // ou 'online', 'error'
+      current_presentation_id: currentPresentation?.id,
+      current_presentation_name: currentPresentation?.name,
+      current_slide_index: currentSlideIndex,
+      total_slides: totalSlides,
+      is_looping: isLooping,
+      auto_play: autoPlay,
+      uptime_seconds: getUptimeInSeconds(),
+      memory_usage: getMemoryUsage(),
+      wifi_strength: getWifiStrength(),
+      app_version: '1.0.0',
+      error_message: lastErrorMessage
+    };
+    
+    const response = await fetch(`${serverUrl}/heartbeat-receiver.php`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-ID': deviceId
+      },
+      body: JSON.stringify(status)
+    });
+    
+    const data = await response.json();
+    
+    // Traiter les commandes en attente
+    if (data.commands && data.commands.length > 0) {
+      for (const command of data.commands) {
+        await executeCommand(command);
+        await acknowledgeCommand(command.id);
+      }
+    }
+  } catch (error) {
+    console.error('Erreur lors de l\'envoi du heartbeat:', error);
+  }
+}</code></pre>
+
+                <h3 class="text-xl font-bold text-gray-700 mt-6 mb-2">2. Exécution des commandes</h3>
+                <pre><code class="language-javascript">// Dans votre application React Native
+async function executeCommand(command) {
+  try {
+    console.log('Exécution de la commande:', command);
+    
+    switch (command.command) {
+      case 'play':
+        setIsPlaying(true);
+        break;
+      case 'pause':
+        setIsPlaying(false);
+        break;
+      case 'stop':
+        setIsPlaying(false);
+        navigation.navigate('Home');
+        break;
+      case 'restart':
+        setCurrentSlideIndex(0);
+        setIsPlaying(true);
+        break;
+      case 'next_slide':
+        goToNextSlide();
+        break;
+      case 'prev_slide':
+        goToPreviousSlide();
+        break;
+      case 'goto_slide':
+        const params = JSON.parse(command.parametres);
+        if (params.slide_index !== undefined) {
+          setCurrentSlideIndex(params.slide_index);
+        }
+        break;
+      case 'assign_presentation':
+        const assignParams = JSON.parse(command.parametres);
+        if (assignParams.presentation_id) {
+          await loadPresentation(assignParams.presentation_id);
+          setIsPlaying(assignParams.auto_play);
+          setIsLooping(assignParams.loop_mode);
+        }
+        break;
+      case 'reboot':
+        // Implémenter le redémarrage de l'appareil
+        break;
+      case 'update_app':
+        // Implémenter la mise à jour de l'application
+        break;
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Erreur lors de l\'exécution de la commande:', error);
+    return { success: false, error: error.message };
+  }
+}</code></pre>
+
+                <h3 class="text-xl font-bold text-gray-700 mt-6 mb-2">3. Confirmation des commandes</h3>
+                <pre><code class="language-javascript">// Dans votre application React Native
+async function acknowledgeCommand(commandId) {
+  try {
+    const response = await fetch(`${serverUrl}/command-ack.php`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-ID': deviceId
+      },
+      body: JSON.stringify({
+        command_id: commandId,
+        status: 'executee',
+        result: 'Command executed successfully'
+      })
+    });
+    
+    const data = await response.json();
+    return data.success;
+  } catch (error) {
+    console.error('Erreur lors de la confirmation de la commande:', error);
+    return false;
+  }
+}</code></pre>
+
+                <h2 class="text-2xl font-bold text-gray-800 mt-8 mb-4">Sécurité</h2>
+                
+                <p class="mb-4">
+                    Cette API ne dispose pas d'authentification intégrée. Il est fortement recommandé de :
+                </p>
+                
+                <ul class="list-disc pl-6 mb-6">
+                    <li class="mb-2">Ajouter une authentification (JWT, API key, etc.)</li>
+                    <li class="mb-2">Limiter l'accès à cette API aux utilisateurs autorisés</li>
+                    <li class="mb-2">Implémenter une protection CSRF pour les formulaires web</li>
+                    <li class="mb-2">Utiliser HTTPS pour chiffrer les communications</li>
+                </ul>
+                
+                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-yellow-700">
+                                <strong>Attention :</strong> Cette API permet de contrôler à distance des appareils. 
+                                Assurez-vous de sécuriser son accès pour éviter toute utilisation non autorisée.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/plugins/autoloader/prism-autoloader.min.js"></script>
+</body>
+</html>
