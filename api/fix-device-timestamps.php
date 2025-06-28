@@ -8,7 +8,7 @@ require_once('timezone-config.php');
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
     
     echo "<h1>Correction des horodatages des appareils</h1>";
     

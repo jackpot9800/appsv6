@@ -15,7 +15,7 @@ echo "</ul>";
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
     
     echo "<h2>Informations MySQL</h2>";
     $stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");
@@ -204,6 +204,6 @@ require_once('timezone-config.php');
 <h2>Liens utiles</h2>
 <ul>
     <li><a href="timezone-test.php">Test du fuseau horaire</a></li>
-    <li><a href="update-timezone.php">Mettre à jour le fuseau horaire</a></li>
+    <li><a href="timezone-update.php">Mettre à jour le fuseau horaire</a></li>
     <li><a href="index.php">Retour à l'accueil</a></li>
 </ul>

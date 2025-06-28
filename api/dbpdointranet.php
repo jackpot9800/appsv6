@@ -8,7 +8,7 @@ require_once('timezone-config.php');
 $db_host = 'localhost';  // Adresse du serveur MySQL
 $db_user = 'root';       // Nom d'utilisateur MySQL
 $db_pass = '';           // Mot de passe MySQL
-$db_name = 'affichageDynamique'; // Nom de la base de données
+$db_name = 'affichisebastien'; // Nom de la base de données
 
 try {
     // Créer une connexion PDO

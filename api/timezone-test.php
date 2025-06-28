@@ -15,7 +15,7 @@ echo "</ul>";
 // Connexion à la base de données
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
     
     echo "<h2>Informations MySQL</h2>";
     $stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");

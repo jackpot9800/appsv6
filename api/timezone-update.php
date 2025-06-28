@@ -72,7 +72,7 @@ function convertToUTC(\$localTime, \$format = 'Y-m-d H:i:s') {
         if ($updateDb) {
             try {
                 require_once('dbpdointranet.php');
-                $dbpdointranet->exec("USE affichageDynamique");
+                $dbpdointranet->exec("USE affichisebastien");
                 
                 // Définir le fuseau horaire MySQL pour la session
                 $offset = date('P'); // Obtenir le décalage horaire au format +HH:MM
@@ -126,7 +126,7 @@ $currentTimezone = date_default_timezone_get();
 // Récupérer les informations MySQL si possible
 try {
     require_once('dbpdointranet.php');
-    $dbpdointranet->exec("USE affichageDynamique");
+    $dbpdointranet->exec("USE affichisebastien");
     
     $stmt = $dbpdointranet->query("SELECT @@global.time_zone as global_tz, @@session.time_zone as session_tz, NOW() as mysql_now, UTC_TIMESTAMP() as mysql_utc");
     $tzInfo = $stmt->fetch(PDO::FETCH_ASSOC);
