@@ -144,26 +144,36 @@ try {
         $deviceId
     ]);
 
-    // Enregistrer un log d'activité
+    // Enregistrer un log d'activité - CORRECTION: Ne pas spécifier l'ID pour éviter les conflits de clé primaire
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
         (type_action, appareil_id, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
         VALUES ('connexion', ?, ?, 'Heartbeat reçu', ?, ?, ?, ?)
     ");
-    $stmt->execute([
-        $appareilId,
-        $deviceId,
-        json_encode([
-            'status' => $data['status'] ?? 'online',
-            'current_presentation' => $data['current_presentation_name'] ?? null,
-            'local_ip' => $localIP,
-            'external_ip' => $externalIP,
-            'device_name' => $deviceName
-        ]),
-        $_SERVER['REMOTE_ADDR'] ?? '',
-        $externalIP,
-        $currentTime // Utiliser l'heure locale correcte
-    ]);
+    
+    try {
+        $stmt->execute([
+            $appareilId,
+            $deviceId,
+            json_encode([
+                'status' => $data['status'] ?? 'online',
+                'current_presentation' => $data['current_presentation_name'] ?? null,
+                'local_ip' => $localIP,
+                'external_ip' => $externalIP,
+                'device_name' => $deviceName
+            ]),
+            $_SERVER['REMOTE_ADDR'] ?? '',
+            $externalIP,
+            $currentTime // Utiliser l'heure locale correcte
+        ]);
+    } catch (PDOException $e) {
+        // Si l'erreur est liée à une clé primaire dupliquée, on l'ignore simplement
+        // mais on continue le traitement pour renvoyer les commandes
+        if (strpos($e->getMessage(), 'Duplicate entry') === false) {
+            // Si c'est une autre erreur, on la propage
+            throw $e;
+        }
+    }
 
     // Réponse avec les commandes en attente
     $stmt = $dbpdointranet->prepare("

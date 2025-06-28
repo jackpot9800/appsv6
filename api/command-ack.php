@@ -89,28 +89,37 @@ try {
     ");
     $stmt->execute([$status, $currentTime, $result, $commandId, $deviceId]);
 
-    // Enregistrer un log d'activité
+    // Enregistrer un log d'activité - CORRECTION: Ne pas spécifier l'ID pour éviter les conflits de clé primaire
     $stmt = $dbpdointranet->prepare("
         INSERT INTO logs_activite 
         (type_action, identifiant_appareil, message, details, adresse_ip, adresse_ip_externe, date_action)
         VALUES ('commande_distante', ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->execute([
-        $deviceId,
-        "Commande {$commande['commande']} " . ($status === 'executee' ? 'exécutée' : 'échouée'),
-        json_encode([
-            'command_id' => $commandId,
-            'command' => $commande['commande'],
-            'status' => $status,
-            'result' => $result,
-            'local_ip' => $localIP,
-            'external_ip' => $externalIP,
-            'device_name' => $deviceName
-        ]),
-        $_SERVER['REMOTE_ADDR'] ?? '',
-        $externalIP,
-        $currentTime // Utiliser l'heure locale correcte
-    ]);
+    
+    try {
+        $stmt->execute([
+            $deviceId,
+            "Commande {$commande['commande']} " . ($status === 'executee' ? 'exécutée' : 'échouée'),
+            json_encode([
+                'command_id' => $commandId,
+                'command' => $commande['commande'],
+                'status' => $status,
+                'result' => $result,
+                'local_ip' => $localIP,
+                'external_ip' => $externalIP,
+                'device_name' => $deviceName
+            ]),
+            $_SERVER['REMOTE_ADDR'] ?? '',
+            $externalIP,
+            $currentTime // Utiliser l'heure locale correcte
+        ]);
+    } catch (PDOException $e) {
+        // Si l'erreur est liée à une clé primaire dupliquée, on l'ignore simplement
+        if (strpos($e->getMessage(), 'Duplicate entry') === false) {
+            // Si c'est une autre erreur, on la propage
+            throw $e;
+        }
+    }
 
     echo json_encode([
         'success' => true, 
