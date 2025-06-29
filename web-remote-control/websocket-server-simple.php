@@ -61,7 +61,7 @@ class SimpleWebSocketServer implements MessageComponentInterface {
     }
 }
 
-// Démarrer le serveur WebSocket sur toutes les interfaces (0.0.0.0)
+// Démarrer le serveur WebSocket sur localhost:8080
 $server = IoServer::factory(
     new HttpServer(
         new WsServer(
