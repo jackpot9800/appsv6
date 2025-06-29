@@ -32,6 +32,8 @@ export class WebSocketService {
     private isConnected: boolean = false;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private pingTimer: NodeJS.Timeout | null = null;
+    private connectionAttempts: number = 0;
+    private maxConnectionAttempts: number = 5;
     
     private onConnectCallbacks: (() => void)[] = [];
     private onDisconnectCallbacks: (() => void)[] = [];
@@ -64,11 +66,19 @@ export class WebSocketService {
         console.log(`[WebSocket] Connexion au serveur: ${this.serverUrl}`);
         
         try {
+            // Vérifier si l'URL est valide
+            if (!this.serverUrl.startsWith('ws://') && !this.serverUrl.startsWith('wss://')) {
+                console.error('[WebSocket] URL invalide, doit commencer par ws:// ou wss://');
+                this.notifyDisconnect();
+                return;
+            }
+            
             this.socket = new WebSocket(this.serverUrl);
             
             this.socket.onopen = () => {
                 console.log('[WebSocket] Connexion établie');
                 this.isConnected = true;
+                this.connectionAttempts = 0;
                 
                 // Enregistrer l'appareil
                 this.sendMessage({
@@ -94,20 +104,23 @@ export class WebSocketService {
                 }
             };
             
-            this.socket.onclose = () => {
-                console.log('[WebSocket] Connexion fermée');
+            this.socket.onclose = (event) => {
+                console.log('[WebSocket] Connexion fermée', event.code, event.reason);
                 this.isConnected = false;
                 
                 // Arrêter le ping
                 this.stopPing();
                 
-                // Exécuter les callbacks de déconnexion
-                this.onDisconnectCallbacks.forEach(callback => callback());
+                // Notifier de la déconnexion
+                this.notifyDisconnect();
                 
                 // Reconnecter automatiquement si activé
-                if (this.autoReconnect) {
-                    console.log(`[WebSocket] Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
+                if (this.autoReconnect && this.connectionAttempts < this.maxConnectionAttempts) {
+                    this.connectionAttempts++;
+                    console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxConnectionAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
                     this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
+                } else if (this.connectionAttempts >= this.maxConnectionAttempts) {
+                    console.log(`[WebSocket] Nombre maximum de tentatives atteint (${this.maxConnectionAttempts}), abandon des tentatives de reconnexion`);
                 }
             };
             
@@ -117,12 +130,22 @@ export class WebSocketService {
         } catch (error) {
             console.error('[WebSocket] Erreur lors de la création de la connexion:', error);
             
+            // Notifier de la déconnexion
+            this.notifyDisconnect();
+            
             // Reconnecter automatiquement si activé
-            if (this.autoReconnect) {
-                console.log(`[WebSocket] Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
+            if (this.autoReconnect && this.connectionAttempts < this.maxConnectionAttempts) {
+                this.connectionAttempts++;
+                console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxConnectionAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
                 this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
             }
         }
+    }
+    
+    // Notifier de la déconnexion
+    private notifyDisconnect(): void {
+        // Exécuter les callbacks de déconnexion
+        this.onDisconnectCallbacks.forEach(callback => callback());
     }
     
     // Se déconnecter du serveur WebSocket
@@ -142,6 +165,9 @@ export class WebSocketService {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        
+        // Réinitialiser le compteur de tentatives
+        this.connectionAttempts = 0;
     }
     
     // Se reconnecter au serveur WebSocket
@@ -214,6 +240,10 @@ export class WebSocketService {
                 
             case 'pong':
                 console.log('[WebSocket] Pong reçu');
+                break;
+                
+            case 'welcome':
+                console.log('[WebSocket] Message de bienvenue reçu');
                 break;
         }
     }
@@ -313,7 +343,9 @@ export const initWebSocketService = async (): Promise<WebSocketService> => {
         serverUrl,
         deviceId: apiService.getDeviceId(),
         deviceName: apiService.getDeviceName() || `Fire TV ${apiService.getDeviceId().substring(0, 8)}`,
-        autoReconnect: true
+        autoReconnect: true,
+        reconnectInterval: 5000,
+        pingInterval: 30000
     });
     
     // Configurer les callbacks
