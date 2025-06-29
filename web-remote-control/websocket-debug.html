@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnostic WebSocket - Fire TV</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .log-entry {
+            border-left-width: 4px;
+        }
+        .log-entry-sent {
+            border-left-color: #3b82f6;
+        }
+        .log-entry-received {
+            border-left-color: #10b981;
+        }
+        .log-entry-error {
+            border-left-color: #ef4444;
+        }
+        .log-entry-info {
+            border-left-color: #f59e0b;
+        }
+        
+        .status-connected {
+            background-color: #10b981;
+        }
+        
+        .status-disconnected {
+            background-color: #ef4444;
+        }
+        
+        .status-connecting {
+            background-color: #f59e0b;
+        }
+    </style>
+    <!-- Inclure le script client WebSocket -->
+    <script src="websocket-client.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">
+                <i class="fas fa-bug text-red-600"></i>
+                Diagnostic WebSocket - Fire TV
+            </h1>
+            
+            <div class="flex items-center space-x-4">
+                <div id="connection-status" class="flex items-center space-x-2 px-4 py-2 rounded-lg text-white status-disconnected">
+                    <i id="status-icon" class="fas fa-plug"></i>
+                    <span id="status-text">Déconnecté</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Configuration et tests -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-cogs text-blue-600"></i>
+                    Configuration et tests
+                </h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label for="server-url" class="block text-sm font-medium text-gray-700 mb-1">
+                            URL du serveur WebSocket
+                        </label>
+                        <input type="text" id="server-url" value="ws://107.159.146.143:8080" 
+                               class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                    </div>
+                    
+                    <div class="flex space-x-4">
+                        <button id="test-connection" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg">
+                            <i class="fas fa-plug mr-2"></i>
+                            Tester la connexion
+                        </button>
+                        
+                        <button id="disconnect-button" class="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-lg hidden">
+                            <i class="fas fa-times mr-2"></i>
+                            Déconnecter
+                        </button>
+                    </div>
+                    
+                    <div class="border-t border-gray-200 pt-4">
+                        <h3 class="font-medium text-gray-700 mb-2">Tests rapides</h3>
+                        
+                        <div class="space-y-2">
+                            <button id="test-ping" class="w-full bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-lg">
+                                <i class="fas fa-heartbeat mr-2"></i>
+                                Envoyer un ping
+                            </button>
+                            
+                            <button id="test-register" class="w-full bg-purple-500 hover:bg-purple-600 text-white py-2 px-4 rounded-lg">
+                                <i class="fas fa-user-plus mr-2"></i>
+                                S'enregistrer comme admin
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-history text-blue-600"></i>
+                        Logs
+                    </h2>
+                    
+                    <button id="clear-logs" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+                
+                <div id="logs" class="space-y-2 max-h-96 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                    <div class="log-entry log-entry-info p-2 pl-4">
+                        <div class="text-sm font-medium">Diagnostic WebSocket</div>
+                        <div class="text-xs text-gray-500">Utilisez les boutons pour tester la connexion WebSocket</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Informations de diagnostic -->
+        <div class="mt-8 bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-info-circle text-blue-600"></i>
+                Informations de diagnostic
+            </h2>
+            
+            <div class="space-y-4">
+                <div>
+                    <h3 class="font-medium text-gray-700 mb-2">Vérifications à effectuer</h3>
+                    <ul class="list-disc pl-6 space-y-2">
+                        <li>Vérifiez que le serveur WebSocket est bien démarré avec <code>php start-websocket-server.php</code></li>
+                        <li>Vérifiez que le port 8080 est ouvert dans votre pare-feu</li>
+                        <li>Vérifiez que le port 8080 est correctement redirigé vers votre serveur</li>
+                        <li>Vérifiez que le serveur WebSocket écoute sur toutes les interfaces (0.0.0.0)</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h3 class="font-medium text-gray-700 mb-2">Commandes utiles</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg">
+                        <p class="font-mono text-sm mb-2">
+                            # Vérifier si le port 8080 est ouvert
+                        </p>
+                        <p class="font-mono text-sm mb-2">
+                            netstat -an | grep 8080
+                        </p>
+                        <p class="font-mono text-sm mb-2">
+                            # Vérifier les processus PHP en cours
+                        </p>
+                        <p class="font-mono text-sm">
+                            ps aux | grep php
+                        </p>
+                    </div>
+                </div>
+                
+                <div>
+                    <h3 class="font-medium text-gray-700 mb-2">Alternatives</h3>
+                    <p class="text-sm text-gray-600 mb-2">
+                        Si vous ne parvenez pas à faire fonctionner le WebSocket, vous pouvez utiliser l'API REST pour le contrôle à distance :
+                    </p>
+                    <ul class="list-disc pl-6 space-y-1 text-sm text-gray-600">
+                        <li>Utilisez <code>remote-control-api.php</code> pour envoyer des commandes</li>
+                        <li>Utilisez <code>heartbeat-receiver.php</code> pour recevoir les statuts des appareils</li>
+                        <li>Configurez un polling régulier pour simuler les notifications en temps réel</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variables globales
+        let wsClient = null;
+        
+        // Éléments DOM
+        const serverUrlInput = document.getElementById('server-url');
+        const testConnectionButton = document.getElementById('test-connection');
+        const disconnectButton = document.getElementById('disconnect-button');
+        const testPingButton = document.getElementById('test-ping');
+        const testRegisterButton = document.getElementById('test-register');
+        const clearLogsButton = document.getElementById('clear-logs');
+        const logsContainer = document.getElementById('logs');
+        const connectionStatus = document.getElementById('connection-status');
+        const statusIcon = document.getElementById('status-icon');
+        const statusText = document.getElementById('status-text');
+        
+        // Initialisation
+        document.addEventListener('DOMContentLoaded', function() {
+            // Bouton de test de connexion
+            testConnectionButton.addEventListener('click', function() {
+                testConnection();
+            });
+            
+            // Bouton de déconnexion
+            disconnectButton.addEventListener('click', function() {
+                disconnectWebSocket();
+            });
+            
+            // Bouton de test de ping
+            testPingButton.addEventListener('click', function() {
+                testPing();
+            });
+            
+            // Bouton de test d'enregistrement
+            testRegisterButton.addEventListener('click', function() {
+                testRegister();
+            });
+            
+            // Bouton de nettoyage des logs
+            clearLogsButton.addEventListener('click', function() {
+                clearLogs();
+            });
+            
+            // Ajouter des informations sur le navigateur
+            addLog('Informations navigateur: ' + navigator.userAgent, 'info');
+            
+            // Vérifier le support WebSocket
+            if ('WebSocket' in window) {
+                addLog('WebSocket est supporté par ce navigateur', 'info');
+            } else {
+                addLog('WebSocket n\'est PAS supporté par ce navigateur', 'error');
+            }
+        });
+        
+        // Tester la connexion WebSocket
+        function testConnection() {
+            const serverUrl = serverUrlInput.value;
+            
+            if (!serverUrl) {
+                addLog('URL du serveur requise', 'error');
+                return;
+            }
+            
+            // Mettre à jour l'interface
+            updateConnectionStatus('connecting');
+            addLog(`Tentative de connexion à ${serverUrl}...`, 'info');
+            
+            try {
+                // Créer le client WebSocket
+                wsClient = new DeviceWebSocketClient({
+                    serverUrl: serverUrl,
+                    isAdmin: true,
+                    autoReconnect: false
+                });
+                
+                // Configurer les callbacks
+                wsClient.onConnect(function() {
+                    updateConnectionStatus('connected');
+                    addLog('Connecté au serveur WebSocket', 'info');
+                    
+                    // Activer les boutons de test
+                    testPingButton.disabled = false;
+                    testRegisterButton.disabled = false;
+                });
+                
+                wsClient.onDisconnect(function() {
+                    updateConnectionStatus('disconnected');
+                    addLog('Déconnecté du serveur WebSocket', 'info');
+                    
+                    // Désactiver les boutons de test
+                    testPingButton.disabled = true;
+                    testRegisterButton.disabled = true;
+                });
+                
+                wsClient.onCommand(function(command, parameters) {
+                    addLog(`Commande reçue: ${command}`, 'received', { command, parameters });
+                });
+                
+                // Connecter
+                wsClient.connect();
+                
+                // Ajouter un timeout pour la connexion
+                setTimeout(function() {
+                    if (!wsClient.isConnected) {
+                        addLog('Timeout de connexion - Le serveur ne répond pas', 'error');
+                        updateConnectionStatus('disconnected');
+                        
+                        // Suggestions de dépannage
+                        addLog('Suggestions de dépannage:', 'info');
+                        addLog('1. Vérifiez que le serveur WebSocket est démarré', 'info');
+                        addLog('2. Vérifiez que le port 8080 est ouvert dans votre pare-feu', 'info');
+                        addLog('3. Essayez avec l\'URL ws://localhost:8080 si vous êtes sur le même serveur', 'info');
+                        addLog('4. Vérifiez les logs du serveur WebSocket', 'info');
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                updateConnectionStatus('disconnected');
+                addLog(`Erreur lors de la création du client WebSocket: ${error.message}`, 'error');
+            }
+        }
+        
+        // Déconnecter du serveur WebSocket
+        function disconnectWebSocket() {
+            if (wsClient) {
+                wsClient.disconnect();
+                wsClient = null;
+            }
+            
+            updateConnectionStatus('disconnected');
+            addLog('Déconnexion manuelle du serveur WebSocket', 'info');
+        }
+        
+        // Tester l'envoi d'un ping
+        function testPing() {
+            if (!wsClient || !wsClient.isConnected) {
+                addLog('Non connecté au serveur WebSocket', 'error');
+                return;
+            }
+            
+            const success = wsClient.ping();
+            
+            if (success) {
+                addLog('Ping envoyé avec succès', 'sent');
+            } else {
+                addLog('Erreur lors de l\'envoi du ping', 'error');
+            }
+        }
+        
+        // Tester l'enregistrement comme admin
+        function testRegister() {
+            if (!wsClient || !wsClient.isConnected) {
+                addLog('Non connecté au serveur WebSocket', 'error');
+                return;
+            }
+            
+            const success = wsClient.sendMessage({
+                type: 'register_admin',
+                timestamp: new Date().toISOString()
+            });
+            
+            if (success) {
+                addLog('Enregistrement admin envoyé avec succès', 'sent');
+            } else {
+                addLog('Erreur lors de l\'enregistrement admin', 'error');
+            }
+        }
+        
+        // Mettre à jour l'affichage du statut de connexion
+        function updateConnectionStatus(status) {
+            connectionStatus.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-white';
+            
+            switch (status) {
+                case 'connected':
+                    connectionStatus.classList.add('status-connected');
+                    statusIcon.className = 'fas fa-plug';
+                    statusText.textContent = 'Connecté';
+                    testConnectionButton.classList.add('hidden');
+                    disconnectButton.classList.remove('hidden');
+                    break;
+                    
+                case 'connecting':
+                    connectionStatus.classList.add('status-connecting');
+                    statusIcon.className = 'fas fa-spinner fa-spin';
+                    statusText.textContent = 'Connexion...';
+                    testConnectionButton.classList.add('hidden');
+                    disconnectButton.classList.add('hidden');
+                    break;
+                    
+                case 'disconnected':
+                default:
+                    connectionStatus.classList.add('status-disconnected');
+                    statusIcon.className = 'fas fa-plug';
+                    statusText.textContent = 'Déconnecté';
+                    testConnectionButton.classList.remove('hidden');
+                    disconnectButton.classList.add('hidden');
+                    break;
+            }
+        }
+        
+        // Ajouter un log
+        function addLog(message, type = 'info', data = null) {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-entry-${type} p-2 pl-4`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            
+            let icon = '';
+            switch (type) {
+                case 'sent':
+                    icon = '<i class="fas fa-paper-plane text-blue-500 mr-2"></i>';
+                    break;
+                case 'received':
+                    icon = '<i class="fas fa-download text-green-500 mr-2"></i>';
+                    break;
+                case 'error':
+                    icon = '<i class="fas fa-exclamation-circle text-red-500 mr-2"></i>';
+                    break;
+                default:
+                    icon = '<i class="fas fa-info-circle text-yellow-500 mr-2"></i>';
+                    break;
+            }
+            
+            logEntry.innerHTML = `
+                <div class="flex items-center">
+                    ${icon}
+                    <div class="text-sm font-medium">${message}</div>
+                    <div class="text-xs text-gray-500 ml-auto">${timestamp}</div>
+                </div>
+            `;
+            
+            if (data) {
+                const dataDiv = document.createElement('div');
+                dataDiv.className = 'text-xs text-gray-600 mt-1 pl-6';
+                dataDiv.textContent = JSON.stringify(data, null, 2);
+                logEntry.appendChild(dataDiv);
+            }
+            
+            logsContainer.insertBefore(logEntry, logsContainer.firstChild);
+        }
+        
+        // Nettoyer les logs
+        function clearLogs() {
+            logsContainer.innerHTML = '';
+            addLog('Logs nettoyés', 'info');
+        }
+    </script>
+</body>
+</html>

@@ -1,12 +1,21 @@
 // websocket-client.js - Client WebSocket pour le contrôle à distance des appareils Fire TV
 
-// Configuration
-const WS_SERVER_URL = 'ws://localhost:8080'; // Remplacer par l'URL de votre serveur WebSocket
-
-// Classe de gestion de la connexion WebSocket
+/**
+ * Classe de gestion de la connexion WebSocket pour les appareils Fire TV
+ */
 class DeviceWebSocketClient {
+    /**
+     * Constructeur
+     * @param {Object} options - Options de configuration
+     * @param {string} options.serverUrl - URL du serveur WebSocket
+     * @param {boolean} options.isAdmin - Indique si le client est un administrateur
+     * @param {string} options.deviceId - ID de l'appareil (requis si !isAdmin)
+     * @param {boolean} options.autoReconnect - Reconnexion automatique en cas de déconnexion
+     * @param {number} options.reconnectInterval - Intervalle de reconnexion en ms
+     * @param {number} options.pingInterval - Intervalle de ping en ms
+     */
     constructor(options = {}) {
-        this.serverUrl = options.serverUrl || WS_SERVER_URL;
+        this.serverUrl = options.serverUrl || 'ws://localhost:8080';
         this.isAdmin = options.isAdmin || false;
         this.deviceId = options.deviceId || null;
         this.autoReconnect = options.autoReconnect !== false;
@@ -35,30 +44,35 @@ class DeviceWebSocketClient {
         this.ping = this.ping.bind(this);
     }
     
-    // Se connecter au serveur WebSocket
+    /**
+     * Se connecter au serveur WebSocket
+     */
     connect() {
         if (this.socket) {
             this.disconnect();
         }
         
-        console.log(`Connexion au serveur WebSocket: ${this.serverUrl}`);
+        console.log(`[WebSocket] Connexion au serveur: ${this.serverUrl}`);
         
         try {
             this.socket = new WebSocket(this.serverUrl);
             
             this.socket.onopen = () => {
-                console.log('Connexion WebSocket établie');
+                console.log('[WebSocket] Connexion établie');
                 this.isConnected = true;
                 
                 // Enregistrer le client
                 if (this.isAdmin) {
                     this.sendMessage({
-                        type: 'register_admin'
+                        type: 'register_admin',
+                        timestamp: new Date().toISOString()
                     });
                 } else if (this.deviceId) {
                     this.sendMessage({
                         type: 'register_device',
-                        device_id: this.deviceId
+                        device_id: this.deviceId,
+                        device_name: `Fire TV ${this.deviceId.substring(0, 8)}`,
+                        timestamp: new Date().toISOString()
                     });
                 }
                 
@@ -74,12 +88,12 @@ class DeviceWebSocketClient {
                     const data = JSON.parse(event.data);
                     this.handleMessage(data);
                 } catch (error) {
-                    console.error('Erreur de parsing du message WebSocket:', error);
+                    console.error('[WebSocket] Erreur de parsing du message:', error);
                 }
             };
             
             this.socket.onclose = () => {
-                console.log('Connexion WebSocket fermée');
+                console.log('[WebSocket] Connexion fermée');
                 this.isConnected = false;
                 
                 // Arrêter le ping
@@ -90,26 +104,28 @@ class DeviceWebSocketClient {
                 
                 // Reconnecter automatiquement si activé
                 if (this.autoReconnect) {
-                    console.log(`Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
+                    console.log(`[WebSocket] Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
                     this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
                 }
             };
             
             this.socket.onerror = (error) => {
-                console.error('Erreur WebSocket:', error);
+                console.error('[WebSocket] Erreur:', error);
             };
         } catch (error) {
-            console.error('Erreur lors de la création de la connexion WebSocket:', error);
+            console.error('[WebSocket] Erreur lors de la création de la connexion:', error);
             
             // Reconnecter automatiquement si activé
             if (this.autoReconnect) {
-                console.log(`Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
+                console.log(`[WebSocket] Tentative de reconnexion dans ${this.reconnectInterval / 1000} secondes...`);
                 this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
             }
         }
     }
     
-    // Se déconnecter du serveur WebSocket
+    /**
+     * Se déconnecter du serveur WebSocket
+     */
     disconnect() {
         if (this.socket) {
             this.socket.close();
@@ -128,15 +144,21 @@ class DeviceWebSocketClient {
         }
     }
     
-    // Se reconnecter au serveur WebSocket
+    /**
+     * Se reconnecter au serveur WebSocket
+     */
     reconnect() {
         this.connect();
     }
     
-    // Envoyer un message au serveur WebSocket
+    /**
+     * Envoyer un message au serveur WebSocket
+     * @param {Object} message - Message à envoyer
+     * @returns {boolean} - Succès de l'envoi
+     */
     sendMessage(message) {
-        if (!this.isConnected) {
-            console.warn('Impossible d\'envoyer le message: non connecté');
+        if (!this.isConnected || !this.socket) {
+            console.warn('[WebSocket] Impossible d\'envoyer le message: non connecté');
             return false;
         }
         
@@ -144,15 +166,21 @@ class DeviceWebSocketClient {
             this.socket.send(JSON.stringify(message));
             return true;
         } catch (error) {
-            console.error('Erreur lors de l\'envoi du message:', error);
+            console.error('[WebSocket] Erreur lors de l\'envoi du message:', error);
             return false;
         }
     }
     
-    // Envoyer une commande à un appareil (admin uniquement)
+    /**
+     * Envoyer une commande à un appareil (admin uniquement)
+     * @param {string} deviceId - ID de l'appareil cible
+     * @param {string} command - Commande à envoyer
+     * @param {Object} parameters - Paramètres de la commande
+     * @returns {boolean} - Succès de l'envoi
+     */
     sendCommand(deviceId, command, parameters = {}) {
         if (!this.isAdmin) {
-            console.warn('Seuls les administrateurs peuvent envoyer des commandes');
+            console.warn('[WebSocket] Seuls les administrateurs peuvent envoyer des commandes');
             return false;
         }
         
@@ -165,10 +193,14 @@ class DeviceWebSocketClient {
         });
     }
     
-    // Envoyer le statut de l'appareil (appareil uniquement)
+    /**
+     * Envoyer le statut de l'appareil (appareil uniquement)
+     * @param {Object} status - Statut de l'appareil
+     * @returns {boolean} - Succès de l'envoi
+     */
     sendStatus(status) {
         if (this.isAdmin || !this.deviceId) {
-            console.warn('Seuls les appareils peuvent envoyer leur statut');
+            console.warn('[WebSocket] Seuls les appareils peuvent envoyer leur statut');
             return false;
         }
         
@@ -180,7 +212,10 @@ class DeviceWebSocketClient {
         });
     }
     
-    // Envoyer un ping pour maintenir la connexion active
+    /**
+     * Envoyer un ping pour maintenir la connexion active
+     * @returns {boolean} - Succès de l'envoi
+     */
     ping() {
         return this.sendMessage({
             type: 'ping',
@@ -188,13 +223,17 @@ class DeviceWebSocketClient {
         });
     }
     
-    // Démarrer le ping périodique
+    /**
+     * Démarrer le ping périodique
+     */
     startPing() {
         this.stopPing();
         this.pingTimer = setInterval(this.ping, this.pingInterval);
     }
     
-    // Arrêter le ping périodique
+    /**
+     * Arrêter le ping périodique
+     */
     stopPing() {
         if (this.pingTimer) {
             clearInterval(this.pingTimer);
@@ -202,14 +241,17 @@ class DeviceWebSocketClient {
         }
     }
     
-    // Gérer les messages reçus
+    /**
+     * Gérer les messages reçus
+     * @param {Object} data - Message reçu
+     */
     handleMessage(data) {
-        console.log('Message WebSocket reçu:', data);
+        console.log('[WebSocket] Message reçu:', data);
         
         switch (data.type) {
             case 'command':
                 // Commande reçue (pour les appareils)
-                this.onCommandCallbacks.forEach(callback => callback(data.command, data.parameters));
+                this.onCommandCallbacks.forEach(callback => callback(data.command, data.parameters || {}));
                 break;
                 
             case 'device_status_update':
@@ -229,62 +271,71 @@ class DeviceWebSocketClient {
                 
             case 'pong':
                 // Réponse à un ping
-                console.log('Pong reçu du serveur');
+                console.log('[WebSocket] Pong reçu du serveur');
                 break;
         }
     }
     
-    // Ajouter un callback pour la connexion
+    /**
+     * Ajouter un callback pour la connexion
+     * @param {Function} callback - Fonction à appeler lors de la connexion
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onConnect(callback) {
         this.onConnectCallbacks.push(callback);
         return this;
     }
     
-    // Ajouter un callback pour la déconnexion
+    /**
+     * Ajouter un callback pour la déconnexion
+     * @param {Function} callback - Fonction à appeler lors de la déconnexion
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onDisconnect(callback) {
         this.onDisconnectCallbacks.push(callback);
         return this;
     }
     
-    // Ajouter un callback pour les commandes (appareils)
+    /**
+     * Ajouter un callback pour les commandes (appareils)
+     * @param {Function} callback - Fonction à appeler lors de la réception d'une commande
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onCommand(callback) {
         this.onCommandCallbacks.push(callback);
         return this;
     }
     
-    // Ajouter un callback pour les mises à jour de statut (admins)
+    /**
+     * Ajouter un callback pour les mises à jour de statut (admins)
+     * @param {Function} callback - Fonction à appeler lors de la mise à jour du statut d'un appareil
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onDeviceStatus(callback) {
         this.onDeviceStatusCallbacks.push(callback);
         return this;
     }
     
-    // Ajouter un callback pour les connexions d'appareils (admins)
+    /**
+     * Ajouter un callback pour les connexions d'appareils (admins)
+     * @param {Function} callback - Fonction à appeler lors de la connexion d'un appareil
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onDeviceConnected(callback) {
         this.onDeviceConnectedCallbacks.push(callback);
         return this;
     }
     
-    // Ajouter un callback pour les déconnexions d'appareils (admins)
+    /**
+     * Ajouter un callback pour les déconnexions d'appareils (admins)
+     * @param {Function} callback - Fonction à appeler lors de la déconnexion d'un appareil
+     * @returns {DeviceWebSocketClient} - Instance pour chaînage
+     */
     onDeviceDisconnected(callback) {
         this.onDeviceDisconnectedCallbacks.push(callback);
         return this;
     }
-    
-    // Envoyer un paquet Wake-on-LAN (admin uniquement)
-    sendWakeOnLan(macAddress, broadcastIP = '255.255.255.255') {
-        if (!this.isAdmin) {
-            console.warn('Seuls les administrateurs peuvent envoyer des paquets Wake-on-LAN');
-            return false;
-        }
-        
-        return this.sendMessage({
-            type: 'wake_on_lan',
-            mac_address: macAddress,
-            broadcast_ip: broadcastIP,
-            timestamp: new Date().toISOString()
-        });
-    }
 }
 
-// Exporter la classe pour une utilisation dans d'autres scripts
+// Exposer la classe pour une utilisation dans d'autres scripts
 window.DeviceWebSocketClient = DeviceWebSocketClient;
