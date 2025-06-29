@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Client WebSocket - Fire TV</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="websocket-client.js"></script>
+    <style>
+        .log-entry {
+            border-left-width: 4px;
+        }
+        .log-entry-sent {
+            border-left-color: #3b82f6;
+        }
+        .log-entry-received {
+            border-left-color: #10b981;
+        }
+        .log-entry-error {
+            border-left-color: #ef4444;
+        }
+        .log-entry-info {
+            border-left-color: #f59e0b;
+        }
+        
+        .status-connected {
+            background-color: #10b981;
+        }
+        
+        .status-disconnected {
+            background-color: #ef4444;
+        }
+        
+        .status-connecting {
+            background-color: #f59e0b;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">
+                <i class="fas fa-satellite-dish text-blue-600"></i>
+                Test Client WebSocket - Fire TV
+            </h1>
+            
+            <div class="flex items-center space-x-4">
+                <div id="connection-status" class="flex items-center space-x-2 px-4 py-2 rounded-lg text-white status-disconnected">
+                    <i id="status-icon" class="fas fa-plug"></i>
+                    <span id="status-text">Déconnecté</span>
+                </div>
+                
+                <button id="connect-button" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+                    <i class="fas fa-plug mr-2"></i>
+                    Connecter
+                </button>
+                
+                <button id="disconnect-button" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg hidden">
+                    <i class="fas fa-times mr-2"></i>
+                    Déconnecter
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Configuration -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-cogs text-blue-600"></i>
+                    Configuration
+                </h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label for="server-url" class="block text-sm font-medium text-gray-700 mb-1">
+                            URL du serveur WebSocket
+                        </label>
+                        <input type="text" id="server-url" value="ws://localhost:8080" 
+                               class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Type de client
+                        </label>
+                        <div class="flex space-x-4">
+                            <label class="flex items-center">
+                                <input type="radio" name="client-type" value="device" checked class="mr-2">
+                                <span>Appareil</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="radio" name="client-type" value="admin" class="mr-2">
+                                <span>Administrateur</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="device-id-container">
+                        <label for="device-id" class="block text-sm font-medium text-gray-700 mb-1">
+                            ID de l'appareil
+                        </label>
+                        <input type="text" id="device-id" value="firetv_test_123" 
+                               class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Commandes -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-terminal text-purple-600"></i>
+                    Commandes
+                </h2>
+                
+                <div id="admin-commands" class="space-y-4 hidden">
+                    <div>
+                        <label for="target-device-id" class="block text-sm font-medium text-gray-700 mb-1">
+                            ID de l'appareil cible
+                        </label>
+                        <input type="text" id="target-device-id" placeholder="firetv_123" 
+                               class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                    </div>
+                    
+                    <div>
+                        <label for="command" class="block text-sm font-medium text-gray-700 mb-1">
+                            Commande
+                        </label>
+                        <select id="command" class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                            <option value="play">Lecture</option>
+                            <option value="pause">Pause</option>
+                            <option value="stop">Arrêt</option>
+                            <option value="restart">Redémarrer présentation</option>
+                            <option value="next_slide">Slide suivante</option>
+                            <option value="prev_slide">Slide précédente</option>
+                            <option value="goto_slide">Aller à une slide</option>
+                            <option value="assign_presentation">Assigner présentation</option>
+                            <option value="reboot">Redémarrer appareil</option>
+                            <option value="update_app">Mettre à jour l'app</option>
+                        </select>
+                    </div>
+                    
+                    <div id="command-parameters" class="hidden">
+                        <label for="parameters" class="block text-sm font-medium text-gray-700 mb-1">
+                            Paramètres (JSON)
+                        </label>
+                        <textarea id="parameters" rows="3" 
+                                  class="w-full border border-gray-300 rounded-lg px-4 py-2"
+                                  placeholder='{"slide_index": 0}'></textarea>
+                    </div>
+                    
+                    <button id="send-command" class="w-full bg-purple-500 hover:bg-purple-600 text-white py-2 px-4 rounded-lg">
+                        <i class="fas fa-paper-plane mr-2"></i>
+                        Envoyer la commande
+                    </button>
+                </div>
+                
+                <div id="device-commands" class="space-y-4">
+                    <div>
+                        <label for="status" class="block text-sm font-medium text-gray-700 mb-1">
+                            Statut de l'appareil
+                        </label>
+                        <select id="status" class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                            <option value="online">En ligne</option>
+                            <option value="playing">En diffusion</option>
+                            <option value="paused">En pause</option>
+                            <option value="error">Erreur</option>
+                        </select>
+                    </div>
+                    
+                    <div>
+                        <label for="presentation-name" class="block text-sm font-medium text-gray-700 mb-1">
+                            Nom de la présentation
+                        </label>
+                        <input type="text" id="presentation-name" placeholder="Ma présentation" 
+                               class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="slide-index" class="block text-sm font-medium text-gray-700 mb-1">
+                                Index de slide
+                            </label>
+                            <input type="number" id="slide-index" value="0" min="0" 
+                                   class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                        </div>
+                        
+                        <div>
+                            <label for="total-slides" class="block text-sm font-medium text-gray-700 mb-1">
+                                Total slides
+                            </label>
+                            <input type="number" id="total-slides" value="10" min="1" 
+                                   class="w-full border border-gray-300 rounded-lg px-4 py-2">
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-4">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="is-looping" checked class="mr-2">
+                            <span class="text-sm">Mode boucle</span>
+                        </label>
+                        <label class="flex items-center">
+                            <input type="checkbox" id="auto-play" checked class="mr-2">
+                            <span class="text-sm">Lecture auto</span>
+                        </label>
+                    </div>
+                    
+                    <button id="send-status" class="w-full bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-lg">
+                        <i class="fas fa-paper-plane mr-2"></i>
+                        Envoyer le statut
+                    </button>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-history text-blue-600"></i>
+                        Logs
+                    </h2>
+                    
+                    <button id="clear-logs" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+                
+                <div id="logs" class="space-y-2 max-h-96 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                    <div class="log-entry log-entry-info p-2 pl-4">
+                        <div class="text-sm font-medium">Bienvenue dans le client de test WebSocket</div>
+                        <div class="text-xs text-gray-500">Connectez-vous au serveur pour commencer</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variables globales
+        let wsClient = null;
+        
+        // Éléments DOM
+        const serverUrlInput = document.getElementById('server-url');
+        const deviceIdInput = document.getElementById('device-id');
+        const clientTypeRadios = document.getElementsByName('client-type');
+        const deviceIdContainer = document.getElementById('device-id-container');
+        const adminCommands = document.getElementById('admin-commands');
+        const deviceCommands = document.getElementById('device-commands');
+        const connectButton = document.getElementById('connect-button');
+        const disconnectButton = document.getElementById('disconnect-button');
+        const connectionStatus = document.getElementById('connection-status');
+        const statusIcon = document.getElementById('status-icon');
+        const statusText = document.getElementById('status-text');
+        const commandSelect = document.getElementById('command');
+        const commandParameters = document.getElementById('command-parameters');
+        const parametersTextarea = document.getElementById('parameters');
+        const targetDeviceIdInput = document.getElementById('target-device-id');
+        const sendCommandButton = document.getElementById('send-command');
+        const statusSelect = document.getElementById('status');
+        const presentationNameInput = document.getElementById('presentation-name');
+        const slideIndexInput = document.getElementById('slide-index');
+        const totalSlidesInput = document.getElementById('total-slides');
+        const isLoopingCheckbox = document.getElementById('is-looping');
+        const autoPlayCheckbox = document.getElementById('auto-play');
+        const sendStatusButton = document.getElementById('send-status');
+        const logsContainer = document.getElementById('logs');
+        const clearLogsButton = document.getElementById('clear-logs');
+        
+        // Initialisation
+        document.addEventListener('DOMContentLoaded', function() {
+            // Gérer le changement de type de client
+            for (const radio of clientTypeRadios) {
+                radio.addEventListener('change', function() {
+                    const isAdmin = this.value === 'admin';
+                    deviceIdContainer.style.display = isAdmin ? 'none' : 'block';
+                    adminCommands.style.display = isAdmin ? 'block' : 'none';
+                    deviceCommands.style.display = isAdmin ? 'none' : 'block';
+                });
+            }
+            
+            // Gérer le changement de commande
+            commandSelect.addEventListener('change', function() {
+                const command = this.value;
+                const needsParameters = ['goto_slide', 'assign_presentation'].includes(command);
+                commandParameters.style.display = needsParameters ? 'block' : 'none';
+                
+                // Préremplir les paramètres selon la commande
+                if (command === 'goto_slide') {
+                    parametersTextarea.value = JSON.stringify({ slide_index: 0 }, null, 2);
+                } else if (command === 'assign_presentation') {
+                    parametersTextarea.value = JSON.stringify({
+                        presentation_id: 1,
+                        auto_play: true,
+                        loop_mode: true
+                    }, null, 2);
+                } else {
+                    parametersTextarea.value = '{}';
+                }
+            });
+            
+            // Bouton de connexion
+            connectButton.addEventListener('click', function() {
+                connectWebSocket();
+            });
+            
+            // Bouton de déconnexion
+            disconnectButton.addEventListener('click', function() {
+                disconnectWebSocket();
+            });
+            
+            // Bouton d'envoi de commande
+            sendCommandButton.addEventListener('click', function() {
+                sendCommand();
+            });
+            
+            // Bouton d'envoi de statut
+            sendStatusButton.addEventListener('click', function() {
+                sendStatus();
+            });
+            
+            // Bouton de nettoyage des logs
+            clearLogsButton.addEventListener('click', function() {
+                clearLogs();
+            });
+        });
+        
+        // Connecter au serveur WebSocket
+        function connectWebSocket() {
+            const serverUrl = serverUrlInput.value;
+            const isAdmin = document.querySelector('input[name="client-type"]:checked').value === 'admin';
+            const deviceId = deviceIdInput.value;
+            
+            if (!serverUrl) {
+                addLog('URL du serveur requise', 'error');
+                return;
+            }
+            
+            if (!isAdmin && !deviceId) {
+                addLog('ID de l\'appareil requis', 'error');
+                return;
+            }
+            
+            // Mettre à jour l'interface
+            updateConnectionStatus('connecting');
+            
+            // Créer le client WebSocket
+            wsClient = new DeviceWebSocketClient({
+                serverUrl: serverUrl,
+                isAdmin: isAdmin,
+                deviceId: isAdmin ? null : deviceId,
+                autoReconnect: true
+            });
+            
+            // Configurer les callbacks
+            wsClient.onConnect(function() {
+                updateConnectionStatus('connected');
+                addLog('Connecté au serveur WebSocket', 'info');
+            });
+            
+            wsClient.onDisconnect(function() {
+                updateConnectionStatus('disconnected');
+                addLog('Déconnecté du serveur WebSocket', 'info');
+            });
+            
+            wsClient.onCommand(function(command, parameters) {
+                addLog(`Commande reçue: ${command}`, 'received', { command, parameters });
+            });
+            
+            wsClient.onDeviceStatus(function(deviceId, status) {
+                addLog(`Statut reçu de ${deviceId}`, 'received', status);
+            });
+            
+            wsClient.onDeviceConnected(function(deviceId) {
+                addLog(`Appareil connecté: ${deviceId}`, 'info');
+            });
+            
+            wsClient.onDeviceDisconnected(function(deviceId) {
+                addLog(`Appareil déconnecté: ${deviceId}`, 'info');
+            });
+            
+            // Connecter
+            wsClient.connect();
+        }
+        
+        // Déconnecter du serveur WebSocket
+        function disconnectWebSocket() {
+            if (wsClient) {
+                wsClient.disconnect();
+                wsClient = null;
+            }
+            
+            updateConnectionStatus('disconnected');
+        }
+        
+        // Mettre à jour l'affichage du statut de connexion
+        function updateConnectionStatus(status) {
+            connectionStatus.className = 'flex items-center space-x-2 px-4 py-2 rounded-lg text-white';
+            
+            switch (status) {
+                case 'connected':
+                    connectionStatus.classList.add('status-connected');
+                    statusIcon.className = 'fas fa-plug';
+                    statusText.textContent = 'Connecté';
+                    connectButton.classList.add('hidden');
+                    disconnectButton.classList.remove('hidden');
+                    break;
+                    
+                case 'connecting':
+                    connectionStatus.classList.add('status-connecting');
+                    statusIcon.className = 'fas fa-spinner fa-spin';
+                    statusText.textContent = 'Connexion...';
+                    connectButton.classList.add('hidden');
+                    disconnectButton.classList.add('hidden');
+                    break;
+                    
+                case 'disconnected':
+                default:
+                    connectionStatus.classList.add('status-disconnected');
+                    statusIcon.className = 'fas fa-plug';
+                    statusText.textContent = 'Déconnecté';
+                    connectButton.classList.remove('hidden');
+                    disconnectButton.classList.add('hidden');
+                    break;
+            }
+        }
+        
+        // Envoyer une commande
+        function sendCommand() {
+            if (!wsClient || !wsClient.isConnected) {
+                addLog('Non connecté au serveur WebSocket', 'error');
+                return;
+            }
+            
+            const targetDeviceId = targetDeviceIdInput.value;
+            const command = commandSelect.value;
+            
+            if (!targetDeviceId) {
+                addLog('ID de l\'appareil cible requis', 'error');
+                return;
+            }
+            
+            let parameters = {};
+            
+            if (['goto_slide', 'assign_presentation'].includes(command)) {
+                try {
+                    parameters = JSON.parse(parametersTextarea.value);
+                } catch (error) {
+                    addLog(`Erreur de parsing JSON: ${error.message}`, 'error');
+                    return;
+                }
+            }
+            
+            wsClient.sendCommand(targetDeviceId, command, parameters);
+            addLog(`Commande envoyée: ${command} à ${targetDeviceId}`, 'sent', { command, parameters });
+        }
+        
+        // Envoyer un statut
+        function sendStatus() {
+            if (!wsClient || !wsClient.isConnected) {
+                addLog('Non connecté au serveur WebSocket', 'error');
+                return;
+            }
+            
+            const status = statusSelect.value;
+            const presentationName = presentationNameInput.value;
+            const slideIndex = parseInt(slideIndexInput.value);
+            const totalSlides = parseInt(totalSlidesInput.value);
+            const isLooping = isLoopingCheckbox.checked;
+            const autoPlay = autoPlayCheckbox.checked;
+            
+            const statusData = {
+                status: status,
+                current_presentation_name: presentationName || undefined,
+                current_slide_index: isNaN(slideIndex) ? undefined : slideIndex,
+                total_slides: isNaN(totalSlides) ? undefined : totalSlides,
+                is_looping: isLooping,
+                auto_play: autoPlay
+            };
+            
+            wsClient.sendStatus(statusData);
+            addLog(`Statut envoyé: ${status}`, 'sent', statusData);
+        }
+        
+        // Ajouter un log
+        function addLog(message, type = 'info', data = null) {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-entry-${type} p-2 pl-4`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            
+            let icon = '';
+            switch (type) {
+                case 'sent':
+                    icon = '<i class="fas fa-paper-plane text-blue-500 mr-2"></i>';
+                    break;
+                case 'received':
+                    icon = '<i class="fas fa-download text-green-500 mr-2"></i>';
+                    break;
+                case 'error':
+                    icon = '<i class="fas fa-exclamation-circle text-red-500 mr-2"></i>';
+                    break;
+                default:
+                    icon = '<i class="fas fa-info-circle text-yellow-500 mr-2"></i>';
+                    break;
+            }
+            
+            logEntry.innerHTML = `
+                <div class="flex items-center">
+                    ${icon}
+                    <div class="text-sm font-medium">${message}</div>
+                    <div class="text-xs text-gray-500 ml-auto">${timestamp}</div>
+                </div>
+            `;
+            
+            if (data) {
+                const dataDiv = document.createElement('div');
+                dataDiv.className = 'text-xs text-gray-600 mt-1 pl-6';
+                dataDiv.textContent = JSON.stringify(data, null, 2);
+                logEntry.appendChild(dataDiv);
+            }
+            
+            logsContainer.insertBefore(logEntry, logsContainer.firstChild);
+        }
+        
+        // Nettoyer les logs
+        function clearLogs() {
+            logsContainer.innerHTML = '';
+            addLog('Logs nettoyés', 'info');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+    "name": "presentation-kiosk/remote-control",
+    "description": "Remote control system for Fire TV Presentation Kiosk",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "cboden/ratchet": "^0.4.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "PresentationKiosk\\RemoteControl\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Presentation Kiosk Team",
+            "email": "contact@example.com"
+        }
+    ]
+}

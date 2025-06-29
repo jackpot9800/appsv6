@@ -1,1116 +1,540 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  RefreshControl,
+  Image,
+  ScrollView,
+  ActivityIndicator,
   Alert,
-  Dimensions,
-  Platform,
-  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Monitor, Wifi, WifiOff, RefreshCw, Play, Pause, Settings, Repeat, Star, Activity, Zap, CircleAlert as AlertCircle, Clock, UserPlus, Moon, Sun } from 'lucide-react-native';
-import { apiService, Presentation, AssignedPresentation, DefaultPresentation } from '@/services/ApiService';
-import { statusService, RemoteCommand } from '@/services/StatusService';
+import { Monitor, Play, Star, Clock, WifiOff, CircleAlert as AlertCircle, RefreshCw, Settings, Radio } from 'lucide-react-native';
+import { apiService, Presentation } from '@/services/ApiService';
+import { statusService } from '@/services/StatusService';
+import { initWebSocketService, getWebSocketService } from '@/services/WebSocketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 
-const { width } = Dimensions.get('window');
+// Définition des types
+interface AssignedPresentation {
+  presentation_id: number;
+  presentation_name: string;
+  presentation_description: string;
+  auto_play: boolean;
+  loop_mode: boolean;
+}
 
-// Clé pour stocker la préférence de mode anti-veille
-const KEEP_AWAKE_ENABLED_KEY = 'keep_awake_enabled';
+interface DefaultPresentation {
+  presentation_id: number;
+  presentation_name: string;
+  presentation_description: string;
+  slide_count: number;
+  is_default: boolean;
+}
 
 export default function HomeScreen() {
-  const [presentations, setPresentations] = useState<Presentation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'testing' | 'not_configured'>('testing');
+  const [connectionStatus, setConnectionStatus] = useState<'not_configured' | 'connecting' | 'connected' | 'error'>('connecting');
   const [assignedPresentation, setAssignedPresentation] = useState<AssignedPresentation | null>(null);
   const [defaultPresentation, setDefaultPresentation] = useState<DefaultPresentation | null>(null);
-  const [assignmentCheckStarted, setAssignmentCheckStarted] = useState(false);
-  const [defaultCheckStarted, setDefaultCheckStarted] = useState(false);
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const [showDefaultPresentationPrompt, setShowDefaultPresentationPrompt] = useState(false);
-  const [autoLaunchDefaultTimer, setAutoLaunchDefaultTimer] = useState<NodeJS.Timeout | null>(null);
-  
-  // Nouveaux états pour le statut temps réel
-  const [deviceStatus, setDeviceStatus] = useState<'online' | 'offline' | 'playing' | 'paused' | 'error'>('offline');
-  const [currentPresentationInfo, setCurrentPresentationInfo] = useState<{
-    id?: number;
-    name?: string;
-    slideIndex?: number;
-    totalSlides?: number;
-    isLooping?: boolean;
-  }>({});
-  
-  // Nouvel état pour le mode anti-veille
-  const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
-  const keepAwakeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [recentPresentations, setRecentPresentations] = useState<Presentation[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [webSocketStatus, setWebSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
   useEffect(() => {
+    const initializeApp = async () => {
+      setLoading(true);
+      
+      // Initialiser le service API
+      await apiService.initialize();
+      
+      // Vérifier si l'URL du serveur est configurée
+      const serverUrl = apiService.getServerUrl();
+      if (!serverUrl) {
+        setConnectionStatus('not_configured');
+        setLoading(false);
+        return;
+      }
+      
+      await checkConnection();
+      await loadAssignedPresentation();
+      await loadDefaultPresentation();
+      await loadRecentPresentations();
+      
+      // Initialiser le service WebSocket si activé
+      const webSocketEnabled = await AsyncStorage.getItem('websocket_enabled');
+      if (webSocketEnabled !== 'false') {
+        try {
+          setWebSocketStatus('connecting');
+          await initWebSocketService();
+          setWebSocketStatus('connected');
+        } catch (error) {
+          console.error('Error initializing WebSocket service:', error);
+          setWebSocketStatus('disconnected');
+        }
+      }
+      
+      setLoading(false);
+    };
+
     initializeApp();
-    initializeStatusService();
-    loadKeepAwakePreference();
     
-    // Démarrer le timer anti-veille
-    startKeepAwakeTimer();
+    // Démarrer la vérification des présentations assignées
+    apiService.startAssignmentCheck(handleAssignedPresentation);
+    apiService.startDefaultPresentationCheck(handleDefaultPresentation);
     
     return () => {
-      // Nettoyer le timer au démontage
-      if (keepAwakeTimerRef.current) {
-        clearInterval(keepAwakeTimerRef.current);
-      }
-      
-      if (autoLaunchDefaultTimer) {
-        clearTimeout(autoLaunchDefaultTimer);
-      }
-      
-      statusService.stop();
-      
-      // Désactiver le mode anti-veille si on quitte l'application
-      if (Platform.OS !== 'web') {
-        deactivateKeepAwake();
-      }
+      // Arrêter la vérification des présentations assignées
+      apiService.stopAssignmentCheck();
+      apiService.stopDefaultPresentationCheck();
     };
   }, []);
   
-  // Effet pour gérer le mode anti-veille
+  // Vérifier périodiquement le statut WebSocket
   useEffect(() => {
-    if (Platform.OS !== 'web') {
-      if (keepAwakeEnabled) {
-        console.log('Activating keep awake mode');
-        activateKeepAwake();
-        startKeepAwakeTimer();
-      } else {
-        console.log('Deactivating keep awake mode');
-        deactivateKeepAwake();
-        if (keepAwakeTimerRef.current) {
-          clearInterval(keepAwakeTimerRef.current);
-          keepAwakeTimerRef.current = null;
-        }
+    const checkWebSocketStatus = setInterval(() => {
+      const wsService = getWebSocketService();
+      if (wsService) {
+        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
       }
-      
-      // Sauvegarder la préférence
-      AsyncStorage.setItem(KEEP_AWAKE_ENABLED_KEY, String(keepAwakeEnabled));
-    }
-  }, [keepAwakeEnabled]);
-
-  const loadKeepAwakePreference = async () => {
-    try {
-      const savedPreference = await AsyncStorage.getItem(KEEP_AWAKE_ENABLED_KEY);
-      if (savedPreference !== null) {
-        setKeepAwakeEnabled(savedPreference === 'true');
-      }
-    } catch (error) {
-      console.error('Error loading keep awake preference:', error);
-    }
-  };
-  
-  // Fonction pour démarrer le timer qui maintient l'écran allumé
-  const startKeepAwakeTimer = () => {
-    if (Platform.OS !== 'web' && keepAwakeEnabled) {
-      // Nettoyer l'ancien timer s'il existe
-      if (keepAwakeTimerRef.current) {
-        clearInterval(keepAwakeTimerRef.current);
-      }
-      
-      // Créer un nouveau timer qui réactive le mode anti-veille toutes les 30 secondes
-      keepAwakeTimerRef.current = setInterval(() => {
-        console.log('Refreshing keep awake mode to prevent screen timeout');
-        activateKeepAwake();
-      }, 30000);
-    }
-  };
-
-  const initializeApp = async () => {
-    setLoading(true);
-    await apiService.initialize();
+    }, 5000);
     
-    const serverUrl = apiService.getServerUrl();
-    console.log('Current server URL:', serverUrl);
-    
-    if (!serverUrl) {
-      setConnectionStatus('not_configured');
-      setLoading(false);
-      return;
-    }
-    
-    await checkConnection();
-    await loadPresentations();
-    
-    if (apiService.isDeviceRegistered() && connectionStatus === 'connected') {
-      console.log('=== DEVICE IS REGISTERED AND CONNECTED, STARTING CHECKS ===');
-      startAssignmentMonitoring();
-      startDefaultPresentationMonitoring();
-    } else {
-      console.log('=== DEVICE NOT READY FOR CHECKS ===');
-      console.log('Registered:', apiService.isDeviceRegistered());
-      console.log('Connection status:', connectionStatus);
-      
-      setTimeout(async () => {
-        if (apiService.isDeviceRegistered()) {
-          console.log('=== DEVICE NOW REGISTERED, STARTING CHECKS ===');
-          await startAssignmentMonitoring();
-          await startDefaultPresentationMonitoring();
-        }
-      }, 3000);
-    }
-    
-    setLoading(false);
-  };
-
-  const initializeStatusService = async () => {
-    try {
-      await statusService.initialize();
-      
-      // Configurer les callbacks pour le service de statut
-      statusService.setOnStatusUpdate((status) => {
-        setDeviceStatus(status.status);
-        setCurrentPresentationInfo({
-          id: status.current_presentation_id,
-          name: status.current_presentation_name,
-          slideIndex: status.current_slide_index,
-          totalSlides: status.total_slides,
-          isLooping: status.is_looping,
-        });
-      });
-
-      statusService.setOnRemoteCommand((command) => {
-        handleRemoteCommand(command);
-      });
-
-      // Mettre à jour le statut initial
-      statusService.updateStatus({ status: 'online' });
-      
-    } catch (error) {
-      console.error('Failed to initialize status service:', error);
-    }
-  };
-
-  const handleRemoteCommand = (command: RemoteCommand) => {
-    console.log('=== HANDLING REMOTE COMMAND ===', command);
-    
-    switch (command.command) {
-      case 'play':
-        // Reprendre la lecture si une présentation est en cours
-        if (currentPresentationInfo.id) {
-          router.push(`/presentation/${currentPresentationInfo.id}?auto_play=true&loop_mode=${currentPresentationInfo.isLooping}&remote_command=play`);
-        }
-        break;
-        
-      case 'pause':
-        // Mettre en pause (sera géré par l'écran de présentation)
-        statusService.updatePlaybackStatus('paused');
-        break;
-        
-      case 'stop':
-        // Arrêter et revenir à l'accueil
-        router.push('/(tabs)/');
-        statusService.updatePlaybackStatus('stopped');
-        break;
-        
-      case 'restart':
-        // Redémarrer la présentation courante
-        if (currentPresentationInfo.id) {
-          router.push(`/presentation/${currentPresentationInfo.id}?auto_play=true&loop_mode=true&restart=true`);
-        }
-        break;
-        
-      case 'assign_presentation':
-        // Assigner et lancer une nouvelle présentation
-        if (command.parameters?.presentation_id) {
-          const autoPlay = command.parameters.auto_play ?? true;
-          const loopMode = command.parameters.loop_mode ?? true;
-          router.push(`/presentation/${command.parameters.presentation_id}?auto_play=${autoPlay}&loop_mode=${loopMode}&assigned=true`);
-        }
-        break;
-        
-      case 'reboot':
-        // Simuler un redémarrage de l'application
-        Alert.alert(
-          'Redémarrage demandé',
-          'L\'application va redémarrer...',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                statusService.updateStatus({ status: 'offline' });
-                // En production, cela pourrait redémarrer l'app
-                setTimeout(() => {
-                  statusService.updateStatus({ status: 'online' });
-                }, 3000);
-              }
-            }
-          ]
-        );
-        break;
-        
-      default:
-        console.warn('Unknown remote command:', command.command);
-    }
-  };
+    return () => clearInterval(checkWebSocketStatus);
+  }, []);
 
   const checkConnection = async () => {
-    const serverUrl = apiService.getServerUrl();
-    if (!serverUrl) {
-      setConnectionStatus('not_configured');
-      return;
-    }
-    
-    setConnectionStatus('testing');
     try {
-      console.log('Testing connection to:', serverUrl);
-      const isConnected = await apiService.testConnection();
-      console.log('Connection test result:', isConnected);
-      setConnectionStatus(isConnected ? 'connected' : 'disconnected');
-    } catch (error) {
-      console.error('Connection test error:', error);
-      setConnectionStatus('disconnected');
-    }
-  };
-
-  const loadPresentations = async () => {
-    const serverUrl = apiService.getServerUrl();
-    if (!serverUrl) {
-      setConnectionStatus('not_configured');
-      return;
-    }
-    
-    try {
-      console.log('Loading presentations from:', serverUrl);
-      const data = await apiService.getPresentations();
-      console.log('Presentations loaded:', data.length);
-      setPresentations(data);
-    } catch (error) {
-      console.error('Error loading presentations:', error);
-      Alert.alert(
-        'Erreur de connexion',
-        `Impossible de charger les présentations:\n\n${error instanceof Error ? error.message : 'Erreur inconnue'}`,
-        [
-          { text: 'Paramètres', onPress: () => router.push('/(tabs)/settings') },
-          { text: 'Réessayer', onPress: loadPresentations },
-        ]
-      );
-    }
-  };
-
-  const startAssignmentMonitoring = async () => {
-    if (assignmentCheckStarted) {
-      console.log('Assignment check already started');
-      return;
-    }
-
-    console.log('=== STARTING ASSIGNMENT MONITORING ===');
-    setAssignmentCheckStarted(true);
-    
-    try {
-      await apiService.startAssignmentCheck((assigned: AssignedPresentation) => {
-        console.log('=== ASSIGNED PRESENTATION DETECTED ===');
-        console.log('Presentation ID:', assigned.presentation_id);
-        console.log('Auto play:', assigned.auto_play);
-        console.log('Loop mode:', assigned.loop_mode);
-        console.log('Presentation name:', assigned.presentation_name);
-        
-        setAssignedPresentation(assigned);
-        
-        // Lancement automatique IMMÉDIAT pour les présentations assignées
-        console.log('=== AUTO-LAUNCHING ASSIGNED PRESENTATION IMMEDIATELY ===');
-        
-        // Annuler le timer de présentation par défaut si actif
-        if (autoLaunchDefaultTimer) {
-          clearTimeout(autoLaunchDefaultTimer);
-          setAutoLaunchDefaultTimer(null);
-        }
-        
-        // Masquer la notification de présentation par défaut
-        setShowDefaultPresentationPrompt(false);
-        
-        // Mettre à jour le statut
-        statusService.updatePresentationStatus(
-          assigned.presentation_id,
-          assigned.presentation_name,
-          0,
-          0, // Will be updated when presentation loads
-          assigned.loop_mode,
-          assigned.auto_play
-        );
-        
-        // Lancer immédiatement la présentation assignée en mode boucle
-        setTimeout(() => {
-          launchAssignedPresentation(assigned);
-        }, 1000);
-      });
-
-      console.log('=== CHECKING FOR EXISTING ASSIGNMENT ===');
-      const existing = await apiService.checkForAssignedPresentation();
-      if (existing) {
-        console.log('=== FOUND EXISTING ASSIGNMENT ===', existing);
-        setAssignedPresentation(existing);
-        
-        // Lancement automatique immédiat pour les assignations existantes
-        console.log('=== AUTO-LAUNCHING EXISTING ASSIGNED PRESENTATION ===');
-        
-        // Annuler le timer de présentation par défaut si actif
-        if (autoLaunchDefaultTimer) {
-          clearTimeout(autoLaunchDefaultTimer);
-          setAutoLaunchDefaultTimer(null);
-        }
-        
-        // Masquer la notification de présentation par défaut
-        setShowDefaultPresentationPrompt(false);
-        
-        // Mettre à jour le statut
-        statusService.updatePresentationStatus(
-          existing.presentation_id,
-          existing.presentation_name,
-          0,
-          0,
-          existing.loop_mode,
-          existing.auto_play
-        );
-        
-        // Lancer immédiatement
-        setTimeout(() => {
-          launchAssignedPresentation(existing);
-        }, 2000);
-      }
-    } catch (error) {
-      console.log('=== ASSIGNMENT MONITORING FAILED ===');
-      console.log('Error:', error);
+      const connected = await apiService.testConnection();
+      setConnectionStatus(connected ? 'connected' : 'error');
       
-      if (error instanceof Error && error.message.includes('Endpoint not found')) {
-        console.log('⚠️ Assignment features not available on this server version');
-        setAssignmentCheckStarted(false);
-      } else {
-        console.error('Unexpected error starting assignment monitoring:', error);
-        setAssignmentCheckStarted(false);
+      if (connected && !apiService.isDeviceRegistered()) {
+        // Enregistrer l'appareil automatiquement
+        try {
+          await apiService.registerDevice();
+        } catch (error) {
+          console.error('Auto-registration failed:', error);
+        }
       }
+    } catch (error) {
+      console.error('Connection check failed:', error);
+      setConnectionStatus('error');
+      setError(error instanceof Error ? error.message : 'Erreur de connexion inconnue');
     }
   };
 
-  const startDefaultPresentationMonitoring = async () => {
-    if (defaultCheckStarted) {
-      console.log('Default presentation check already started');
-      return;
-    }
-
-    console.log('=== STARTING DEFAULT PRESENTATION MONITORING ===');
-    setDefaultCheckStarted(true);
-    
+  const loadAssignedPresentation = async () => {
     try {
-      await apiService.startDefaultPresentationCheck((defaultPres: DefaultPresentation) => {
-        console.log('=== DEFAULT PRESENTATION DETECTED ===');
-        console.log('Presentation ID:', defaultPres.presentation_id);
-        console.log('Presentation name:', defaultPres.presentation_name);
-        
-        setDefaultPresentation(defaultPres);
-        
-        // Ne pas afficher la notification si une présentation assignée est active
-        if (!assignedPresentation) {
-          // Afficher une notification discrète
-          setShowDefaultPresentationPrompt(true);
-          
-          // Masquer automatiquement après 10 secondes
-          setTimeout(() => {
-            setShowDefaultPresentationPrompt(false);
-          }, 10000);
+      const presentation = await apiService.getLocalAssignedPresentation();
+      setAssignedPresentation(presentation);
+    } catch (error) {
+      console.error('Error loading assigned presentation:', error);
+    }
+  };
 
-          // Auto-lancement après 30 secondes si aucune interaction
-          const timer = setTimeout(() => {
-            console.log('=== AUTO-LAUNCHING DEFAULT PRESENTATION AFTER TIMEOUT ===');
-            launchDefaultPresentation(defaultPres);
-          }, 30000);
-          
-          setAutoLaunchDefaultTimer(timer);
+  const loadDefaultPresentation = async () => {
+    try {
+      const presentation = await apiService.getLocalDefaultPresentation();
+      setDefaultPresentation(presentation);
+    } catch (error) {
+      console.error('Error loading default presentation:', error);
+    }
+  };
+
+  const loadRecentPresentations = async () => {
+    try {
+      const presentations = await apiService.getPresentations();
+      setRecentPresentations(presentations.slice(0, 5));
+    } catch (error) {
+      console.error('Error loading recent presentations:', error);
+    }
+  };
+
+  const handleAssignedPresentation = (presentation: AssignedPresentation) => {
+    setAssignedPresentation(presentation);
+    
+    // Si auto_play est activé, lancer automatiquement la présentation
+    if (presentation.auto_play) {
+      router.push({
+        pathname: `/presentation/${presentation.presentation_id}`,
+        params: {
+          auto_play: 'true',
+          loop_mode: presentation.loop_mode ? 'true' : 'false',
+          assigned: 'true'
         }
       });
+    }
+  };
 
-      console.log('=== CHECKING FOR EXISTING DEFAULT PRESENTATION ===');
-      const existing = await apiService.checkForDefaultPresentation();
-      if (existing) {
-        console.log('=== FOUND EXISTING DEFAULT PRESENTATION ===', existing);
-        setDefaultPresentation(existing);
-        
-        // Ne pas afficher la notification si une présentation assignée est active
-        if (!assignedPresentation) {
-          // Afficher immédiatement la notification pour la présentation par défaut existante
-          setShowDefaultPresentationPrompt(true);
-          
-          // Auto-lancement après 30 secondes
-          const timer = setTimeout(() => {
-            console.log('=== AUTO-LAUNCHING EXISTING DEFAULT PRESENTATION ===');
-            launchDefaultPresentation(existing);
-          }, 30000);
-          
-          setAutoLaunchDefaultTimer(timer);
+  const handleDefaultPresentation = (presentation: DefaultPresentation) => {
+    setDefaultPresentation(presentation);
+  };
+
+  const playAssignedPresentation = () => {
+    if (assignedPresentation) {
+      router.push({
+        pathname: `/presentation/${assignedPresentation.presentation_id}`,
+        params: {
+          auto_play: 'true',
+          loop_mode: assignedPresentation.loop_mode ? 'true' : 'false',
+          assigned: 'true'
         }
-      }
-    } catch (error) {
-      console.log('=== DEFAULT PRESENTATION MONITORING FAILED ===');
-      console.log('Error:', error);
-      
-      if (error instanceof Error && error.message.includes('Endpoint not found')) {
-        console.log('⚠️ Default presentation features not available on this server version');
-        setDefaultCheckStarted(false);
-      } else {
-        console.error('Unexpected error starting default presentation monitoring:', error);
-        setDefaultCheckStarted(false);
-      }
+      });
     }
   };
 
-  const launchAssignedPresentation = (assigned: AssignedPresentation) => {
-    console.log('=== LAUNCHING ASSIGNED PRESENTATION ===');
-    console.log('Presentation ID:', assigned.presentation_id);
-    console.log('Auto play:', assigned.auto_play);
-    console.log('Loop mode:', assigned.loop_mode);
-    
-    // Annuler le timer de présentation par défaut si actif
-    if (autoLaunchDefaultTimer) {
-      clearTimeout(autoLaunchDefaultTimer);
-      setAutoLaunchDefaultTimer(null);
+  const playDefaultPresentation = () => {
+    if (defaultPresentation) {
+      router.push({
+        pathname: `/presentation/${defaultPresentation.presentation_id}`,
+        params: {
+          auto_play: 'true',
+          loop_mode: 'true',
+          assigned: 'false'
+        }
+      });
     }
-    
-    apiService.markAssignedPresentationAsViewed(assigned.presentation_id);
-    
-    // Forcer auto_play et loop_mode à true pour les présentations assignées
-    const params = new URLSearchParams({
-      auto_play: 'true',
-      loop_mode: 'true',
-      assigned: 'true'
-    });
-    
-    const url = `/presentation/${assigned.presentation_id}?${params.toString()}`;
-    console.log('Navigating to:', url);
-    
-    router.push(url);
   };
 
-  const launchDefaultPresentation = (defaultPres: DefaultPresentation) => {
-    console.log('=== LAUNCHING DEFAULT PRESENTATION ===');
-    console.log('Presentation ID:', defaultPres.presentation_id);
-    
-    // Annuler le timer si actif
-    if (autoLaunchDefaultTimer) {
-      clearTimeout(autoLaunchDefaultTimer);
-      setAutoLaunchDefaultTimer(null);
-    }
-    
-    // Masquer la notification
-    setShowDefaultPresentationPrompt(false);
-    
-    const params = new URLSearchParams({
-      auto_play: 'true',
-      loop_mode: 'true',
-      assigned: 'false',
-      default: 'true'
-    });
-    
-    const url = `/presentation/${defaultPres.presentation_id}?${params.toString()}`;
-    console.log('Navigating to:', url);
-    
-    router.push(url);
-  };
-
-  const cancelDefaultAutoLaunch = () => {
-    if (autoLaunchDefaultTimer) {
-      clearTimeout(autoLaunchDefaultTimer);
-      setAutoLaunchDefaultTimer(null);
-    }
-    setShowDefaultPresentationPrompt(false);
-  };
-
-  // Fonction de rafraîchissement manuel
-  const handleManualRefresh = async () => {
-    setRefreshing(true);
-    await checkConnection();
-    await loadPresentations();
-    
-    if (apiService.isDeviceRegistered() && assignmentCheckStarted) {
-      console.log('=== REFRESHING ASSIGNMENT CHECK ===');
-      try {
-        await apiService.checkForAssignedPresentation();
-      } catch (error) {
-        console.log('Assignment refresh failed (normal if endpoint not available):', error);
-      }
-    }
-
-    if (apiService.isDeviceRegistered() && defaultCheckStarted) {
-      console.log('=== REFRESHING DEFAULT PRESENTATION CHECK ===');
-      try {
-        await apiService.checkForDefaultPresentation();
-      } catch (error) {
-        console.log('Default presentation refresh failed (normal if endpoint not available):', error);
-      }
-    }
-    
-    setRefreshing(false);
-  };
-
-  const onRefresh = async () => {
-    await handleManualRefresh();
-  };
-
-  // Lancer une présentation avec mode boucle automatique
   const playPresentation = (presentation: Presentation) => {
-    // Annuler le timer de présentation par défaut si actif
-    if (autoLaunchDefaultTimer) {
-      clearTimeout(autoLaunchDefaultTimer);
-      setAutoLaunchDefaultTimer(null);
-    }
-    
-    // Mettre à jour le statut
-    statusService.updatePresentationStatus(
-      presentation.id,
-      presentation.name || presentation.nom || 'Présentation',
-      0,
-      presentation.slide_count,
-      true, // loop mode
-      true  // auto play
-    );
-    
-    // Lancer automatiquement en mode boucle
-    const params = new URLSearchParams({
-      auto_play: 'true',
-      loop_mode: 'true',
-      assigned: 'false'
+    router.push({
+      pathname: `/presentation/${presentation.id}`,
+      params: {
+        auto_play: 'true',
+        loop_mode: 'true',
+        assigned: 'false'
+      }
     });
-    
-    const url = `/presentation/${presentation.id}?${params.toString()}`;
-    console.log('Launching presentation with auto-loop:', url);
-    
-    router.push(url);
   };
 
   const goToSettings = () => {
-    router.push('/(tabs)/settings');
+    router.push('/settings');
   };
 
-  const renderConnectionStatus = () => {
-    const statusConfig = {
-      connected: { color: '#10b981', text: 'Connecté au serveur', icon: Wifi },
-      disconnected: { color: '#ef4444', text: 'Serveur inaccessible', icon: WifiOff },
-      testing: { color: '#f59e0b', text: 'Test de connexion...', icon: RefreshCw },
-      not_configured: { color: '#6b7280', text: 'Serveur non configuré', icon: WifiOff },
-    };
-
-    const config = statusConfig[connectionStatus];
-    const IconComponent = config.icon;
-
-    return (
-      <TouchableOpacity 
-        style={[
-          styles.statusCard, 
-          { borderLeftColor: config.color },
-          focusedIndex === -1 && styles.focusedCard
-        ]}
-        onPress={goToSettings}
-        accessible={true}
-        accessibilityLabel={`Statut de connexion: ${config.text}. Appuyez pour aller aux paramètres.`}
-        accessibilityRole="button"
-        onFocus={() => setFocusedIndex(-1)}
-      >
-        <View style={styles.statusHeader}>
-          <IconComponent size={20} color={config.color} />
-          <Text style={[styles.statusText, { color: config.color }]}>
-            {config.text}
-          </Text>
-          <Settings size={16} color="#9ca3af" />
-        </View>
-        <Text style={styles.serverUrl}>
-          {apiService.getServerUrl() || 'Cliquez pour configurer'}
-        </Text>
-        {connectionStatus === 'not_configured' && (
-          <Text style={styles.configHint}>
-            Configurez l'URL de votre serveur pour commencer
-          </Text>
-        )}
-        {assignmentCheckStarted && (
-          <Text style={styles.assignmentStatus}>
-            ✓ Surveillance des assignations active
-          </Text>
-        )}
-        {defaultCheckStarted && (
-          <Text style={styles.assignmentStatus}>
-            ✓ Surveillance des présentations par défaut active
-          </Text>
-        )}
-      </TouchableOpacity>
-    );
-  };
-
-  const renderDeviceStatus = () => {
-    const statusConfig = {
-      online: { color: '#10b981', text: 'En ligne', icon: Activity },
-      offline: { color: '#6b7280', text: 'Hors ligne', icon: WifiOff },
-      playing: { color: '#3b82f6', text: 'En diffusion', icon: Play },
-      paused: { color: '#f59e0b', text: 'En pause', icon: Pause },
-      error: { color: '#ef4444', text: 'Erreur', icon: AlertCircle },
-    };
-
-    const config = statusConfig[deviceStatus];
-    const IconComponent = config.icon;
-
-    return (
-      <View style={[styles.deviceStatusCard, { borderLeftColor: config.color }]}>
-        <View style={styles.statusHeader}>
-          <IconComponent size={20} color={config.color} />
-          <Text style={[styles.statusText, { color: config.color }]}>
-            Statut appareil: {config.text}
-          </Text>
-          <Zap size={16} color="#9ca3af" />
-        </View>
-        
-        {currentPresentationInfo.name && (
-          <View style={styles.currentPresentationInfo}>
-            <Text style={styles.currentPresentationName}>
-              📺 {currentPresentationInfo.name}
-            </Text>
-            {currentPresentationInfo.slideIndex !== undefined && currentPresentationInfo.totalSlides && (
-              <Text style={styles.currentSlideInfo}>
-                Slide {currentPresentationInfo.slideIndex + 1} / {currentPresentationInfo.totalSlides}
-                {currentPresentationInfo.isLooping && ' • Mode boucle'}
-              </Text>
-            )}
-          </View>
-        )}
-        
-        <View style={styles.deviceControls}>
-          <Text style={styles.deviceId}>
-            ID: {apiService.getDeviceId()}
-          </Text>
-          
-          <View style={styles.keepAwakeControl}>
-            <Text style={styles.keepAwakeLabel}>
-              Mode anti-veille:
-            </Text>
-            <Switch
-              value={keepAwakeEnabled}
-              onValueChange={setKeepAwakeEnabled}
-              trackColor={{ false: '#6b7280', true: '#10b981' }}
-              thumbColor={keepAwakeEnabled ? '#ffffff' : '#f4f3f4'}
-            />
-            {keepAwakeEnabled ? (
-              <Sun size={16} color="#10b981" style={styles.keepAwakeIcon} />
-            ) : (
-              <Moon size={16} color="#6b7280" style={styles.keepAwakeIcon} />
-            )}
-          </View>
-        </View>
-      </View>
-    );
-  };
-
-  const renderAssignedPresentation = () => {
-    if (!assignedPresentation) return null;
-
-    return (
-      <View style={styles.assignedSection}>
-        <Text style={styles.assignedTitle}>📌 Présentation assignée</Text>
-        <TouchableOpacity
-          style={[
-            styles.assignedCard,
-            focusedIndex === -2 && styles.focusedCard
-          ]}
-          onPress={() => launchAssignedPresentation(assignedPresentation)}
-          activeOpacity={0.8}
-          accessible={true}
-          accessibilityLabel={`Présentation assignée: ${assignedPresentation.presentation_name}. Appuyez pour lancer.`}
-          accessibilityRole="button"
-          onFocus={() => setFocusedIndex(-2)}
-        >
-          <LinearGradient
-            colors={['#f59e0b', '#d97706']}
-            style={styles.assignedGradient}
-          >
-            <View style={styles.assignedHeader}>
-              <Monitor size={24} color="#ffffff" />
-              <View style={styles.assignedBadges}>
-                <View style={styles.autoPlayBadge}>
-                  <Play size={12} color="#ffffff" />
-                  <Text style={styles.badgeText}>AUTO</Text>
-                </View>
-                <View style={styles.loopBadge}>
-                  <Repeat size={12} color="#ffffff" />
-                  <Text style={styles.badgeText}>BOUCLE</Text>
-                </View>
-              </View>
-            </View>
-            
-            <Text style={styles.assignedName} numberOfLines={2}>
-              {assignedPresentation.presentation_name}
-            </Text>
-            <Text style={styles.assignedDescription} numberOfLines={2}>
-              {assignedPresentation.presentation_description || 'Présentation assignée à cet appareil'}
-            </Text>
-            
-            <View style={styles.assignedFooter}>
-              <Text style={styles.assignedMode}>
-                🚀 Lecture automatique en boucle
-              </Text>
-              <View style={styles.assignedPlayButton}>
-                <Play size={18} color="#ffffff" fill="#ffffff" />
-              </View>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const renderDefaultPresentation = () => {
-    if (!defaultPresentation) return null;
-
-    return (
-      <View style={styles.assignedSection}>
-        <Text style={styles.assignedTitle}>⭐ Présentation par défaut</Text>
-        <TouchableOpacity
-          style={[
-            styles.assignedCard,
-            focusedIndex === 0 && styles.focusedCard
-          ]}
-          onPress={() => launchDefaultPresentation(defaultPresentation)}
-          activeOpacity={0.8}
-          accessible={true}
-          accessibilityLabel={`Présentation par défaut: ${defaultPresentation.presentation_name}. Appuyez pour lancer.`}
-          accessibilityRole="button"
-          onFocus={() => setFocusedIndex(0)}
-        >
-          <LinearGradient
-            colors={['#8b5cf6', '#7c3aed']}
-            style={styles.assignedGradient}
-          >
-            <View style={styles.assignedHeader}>
-              <Star size={24} color="#ffffff" />
-              <View style={styles.assignedBadges}>
-                <View style={styles.defaultBadge}>
-                  <Star size={12} color="#ffffff" />
-                  <Text style={styles.badgeText}>DÉFAUT</Text>
-                </View>
-              </View>
-            </View>
-            
-            <Text style={styles.assignedName} numberOfLines={2}>
-              {defaultPresentation.presentation_name}
-            </Text>
-            <Text style={styles.assignedDescription} numberOfLines={2}>
-              {defaultPresentation.presentation_description || 'Présentation par défaut pour cet appareil'}
-            </Text>
-            
-            <View style={styles.assignedFooter}>
-              <Text style={styles.assignedMode}>
-                🌟 Cliquez pour lancer
-              </Text>
-              <View style={styles.assignedPlayButton}>
-                <Play size={18} color="#ffffff" fill="#ffffff" />
-              </View>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const renderDefaultPresentationPrompt = () => {
-    if (!showDefaultPresentationPrompt || !defaultPresentation) return null;
-
-    return (
-      <View style={styles.promptOverlay}>
-        <View style={styles.promptCard}>
-          <LinearGradient
-            colors={['#8b5cf6', '#7c3aed']}
-            style={styles.promptGradient}
-          >
-            <View style={styles.promptHeader}>
-              <Star size={20} color="#ffffff" />
-              <Text style={styles.promptTitle}>Présentation par défaut disponible</Text>
-              <TouchableOpacity
-                style={styles.promptCloseButton}
-                onPress={cancelDefaultAutoLaunch}
-              >
-                <Text style={styles.promptCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={styles.promptMessage}>
-              "{defaultPresentation.presentation_name}" va se lancer automatiquement dans 30 secondes
-            </Text>
-            
-            <View style={styles.promptActions}>
-              <TouchableOpacity
-                style={styles.promptButton}
-                onPress={() => launchDefaultPresentation(defaultPresentation)}
-              >
-                <Play size={16} color="#ffffff" />
-                <Text style={styles.promptButtonText}>Lancer maintenant</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.promptButton, styles.promptCancelButton]}
-                onPress={cancelDefaultAutoLaunch}
-              >
-                <Text style={styles.promptButtonText}>Annuler</Text>
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-        </View>
-      </View>
-    );
-  };
-
-  const renderPresentationCard = (presentation: Presentation, index: number) => {
-    const gradientColors = [
-      ['#667eea', '#764ba2'],
-      ['#f093fb', '#f5576c'],
-      ['#4facfe', '#00f2fe'],
-      ['#43e97b', '#38f9d7']
-    ];
+  const refreshData = async () => {
+    setLoading(true);
+    setError(null);
     
-    const colors = gradientColors[index % gradientColors.length];
-    const adjustedIndex = index + (defaultPresentation ? 1 : 0);
-    const isFocused = focusedIndex === adjustedIndex;
-
-    return (
-      <TouchableOpacity
-        key={presentation.id}
-        style={[
-          styles.presentationCard,
-          isFocused && styles.focusedCard
-        ]}
-        onPress={() => playPresentation(presentation)}
-        activeOpacity={0.8}
-        accessible={true}
-        accessibilityLabel={`Présentation: ${presentation.name}. ${presentation.slide_count} slides. Appuyez pour lancer en mode boucle automatique.`}
-        accessibilityRole="button"
-        onFocus={() => setFocusedIndex(adjustedIndex)}
-      >
-        <LinearGradient
-          colors={colors}
-          style={styles.cardGradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-        >
-          <View style={styles.cardHeader}>
-            <Monitor size={28} color="#ffffff" />
-            <View style={styles.slideCountBadge}>
-              <Text style={styles.slideCountText}>{presentation.slide_count}</Text>
-            </View>
-          </View>
-          
-          <View style={styles.cardContent}>
-            <Text style={styles.presentationTitle} numberOfLines={2}>
-              {presentation.name}
-            </Text>
-            <Text style={styles.presentationDescription} numberOfLines={3}>
-              {presentation.description || 'Aucune description disponible'}
-            </Text>
-            
-            {/* Indicateur de lecture automatique en boucle */}
-            <View style={styles.autoLoopIndicator}>
-              <Repeat size={14} color="rgba(255, 255, 255, 0.9)" />
-              <Text style={styles.autoLoopText}>Lecture automatique en boucle</Text>
-            </View>
-          </View>
-
-          <View style={styles.cardFooter}>
-            <Text style={styles.createdDate}>
-              {new Date(presentation.created_at).toLocaleDateString('fr-FR')}
-            </Text>
-            <View style={[styles.playButton, isFocused && styles.focusedPlayButton]}>
-              <Play size={18} color="#ffffff" fill="#ffffff" />
-            </View>
-          </View>
-        </LinearGradient>
-      </TouchableOpacity>
-    );
+    try {
+      await checkConnection();
+      await loadAssignedPresentation();
+      await loadDefaultPresentation();
+      await loadRecentPresentations();
+      
+      // Vérifier le statut WebSocket
+      const wsService = getWebSocketService();
+      if (wsService) {
+        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      setError(error instanceof Error ? error.message : 'Erreur lors de l\'actualisation');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <LinearGradient
-          colors={['#667eea', '#764ba2']}
-          style={styles.loadingGradient}
-        >
-          <RefreshCw size={48} color="#ffffff" />
-          <Text style={styles.loadingText}>Initialisation de l'application...</Text>
-          <Text style={styles.loadingSubtext}>Vérification des assignations...</Text>
-        </LinearGradient>
+        <ActivityIndicator size="large" color="#3b82f6" />
+        <Text style={styles.loadingText}>Chargement...</Text>
+      </View>
+    );
+  }
+
+  if (connectionStatus === 'not_configured') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.notConfiguredContainer}>
+          <WifiOff size={64} color="#ef4444" />
+          <Text style={styles.notConfiguredTitle}>Serveur non configuré</Text>
+          <Text style={styles.notConfiguredText}>
+            Vous devez configurer l'URL du serveur pour utiliser l'application.
+          </Text>
+          <TouchableOpacity style={styles.configButton} onPress={goToSettings}>
+            <Text style={styles.configButtonText}>Configurer</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  if (connectionStatus === 'error') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.errorContainer}>
+          <AlertCircle size={64} color="#ef4444" />
+          <Text style={styles.errorTitle}>Erreur de connexion</Text>
+          <Text style={styles.errorText}>
+            {error || "Impossible de se connecter au serveur. Vérifiez l'URL et la disponibilité du serveur."}
+          </Text>
+          <View style={styles.errorButtonsContainer}>
+            <TouchableOpacity style={styles.errorButton} onPress={refreshData}>
+              <RefreshCw size={20} color="#ffffff" />
+              <Text style={styles.errorButtonText}>Réessayer</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.errorButton, styles.settingsButton]} onPress={goToSettings}>
+              <Settings size={20} color="#ffffff" />
+              <Text style={styles.errorButtonText}>Paramètres</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        showsVerticalScrollIndicator={false}
-      >
-        <LinearGradient
-          colors={['#667eea', '#764ba2']}
-          style={styles.headerGradient}
-        >
-          <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <Text style={styles.title}>Kiosque de Présentations</Text>
-              <Text style={styles.subtitle}>
-                Fire TV Stick - Contrôle à distance activé
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Kiosque de Présentations</Text>
+          <Text style={styles.subtitle}>Fire TV Enhanced</Text>
+          
+          <View style={styles.statusContainer}>
+            <View style={styles.statusItem}>
+              <View style={[styles.statusDot, { backgroundColor: '#10b981' }]} />
+              <Text style={styles.statusText}>Connecté au serveur</Text>
+            </View>
+            
+            <View style={styles.statusItem}>
+              <View style={[styles.statusDot, { backgroundColor: webSocketStatus === 'connected' ? '#10b981' : '#6b7280' }]} />
+              <Text style={styles.statusText}>
+                WebSocket {webSocketStatus === 'connected' ? 'connecté' : 'déconnecté'}
               </Text>
-              
-              <View style={styles.headerButtons}>
-                {/* Bouton de rafraîchissement dans l'en-tête */}
-                <TouchableOpacity
-                  style={[
-                    styles.refreshButton,
-                    focusedIndex === -3 && styles.focusedRefreshButton
-                  ]}
-                  onPress={handleManualRefresh}
-                  disabled={refreshing}
-                  accessible={true}
-                  accessibilityLabel="Rafraîchir les données"
-                  accessibilityRole="button"
-                  onFocus={() => setFocusedIndex(-3)}
-                >
-                  <RefreshCw 
-                    size={20} 
-                    color="#ffffff" 
-                    style={refreshing ? styles.spinning : undefined}
-                  />
-                  <Text style={styles.refreshButtonText}>
-                    {refreshing ? 'Actualisation...' : 'Actualiser'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
-        </LinearGradient>
+        </View>
 
-        {renderConnectionStatus()}
-        {renderDeviceStatus()}
-        {renderAssignedPresentation()}
-        {renderDefaultPresentation()}
+        {assignedPresentation && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Présentation assignée</Text>
+              <View style={styles.assignedBadge}>
+                <Star size={12} color="#ffffff" />
+                <Text style={styles.assignedBadgeText}>Assignée</Text>
+              </View>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.assignedPresentationCard}
+              onPress={playAssignedPresentation}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#4f46e5', '#7c3aed']}
+                style={styles.assignedCardGradient}
+              >
+                <View style={styles.assignedCardContent}>
+                  <View style={styles.assignedCardInfo}>
+                    <Text style={styles.assignedCardTitle}>{assignedPresentation.presentation_name}</Text>
+                    <Text style={styles.assignedCardDescription} numberOfLines={2}>
+                      {assignedPresentation.presentation_description}
+                    </Text>
+                    
+                    <View style={styles.assignedCardMeta}>
+                      {assignedPresentation.auto_play && (
+                        <View style={styles.metaTag}>
+                          <Play size={12} color="#ffffff" />
+                          <Text style={styles.metaTagText}>Auto-play</Text>
+                        </View>
+                      )}
+                      
+                      {assignedPresentation.loop_mode && (
+                        <View style={styles.metaTag}>
+                          <RefreshCw size={12} color="#ffffff" />
+                          <Text style={styles.metaTagText}>Boucle</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  
+                  <View style={styles.assignedCardAction}>
+                    <View style={styles.playButton}>
+                      <Play size={24} color="#ffffff" fill="#ffffff" />
+                    </View>
+                  </View>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {defaultPresentation && !assignedPresentation && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Présentation par défaut</Text>
+              <View style={styles.defaultBadge}>
+                <Star size={12} color="#ffffff" />
+                <Text style={styles.defaultBadgeText}>Par défaut</Text>
+              </View>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.defaultPresentationCard}
+              onPress={playDefaultPresentation}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#0ea5e9', '#0284c7']}
+                style={styles.defaultCardGradient}
+              >
+                <View style={styles.defaultCardContent}>
+                  <View style={styles.defaultCardInfo}>
+                    <Text style={styles.defaultCardTitle}>{defaultPresentation.presentation_name}</Text>
+                    <Text style={styles.defaultCardDescription} numberOfLines={2}>
+                      {defaultPresentation.presentation_description}
+                    </Text>
+                    
+                    <View style={styles.defaultCardMeta}>
+                      <View style={styles.metaItem}>
+                        <Monitor size={14} color="#ffffff" />
+                        <Text style={styles.metaText}>
+                          {defaultPresentation.slide_count} slide{defaultPresentation.slide_count > 1 ? 's' : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.defaultCardAction}>
+                    <View style={styles.playButton}>
+                      <Play size={24} color="#ffffff" fill="#ffffff" />
+                    </View>
+                  </View>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>
-              Présentations disponibles ({presentations.length})
-            </Text>
-            <Text style={styles.sectionSubtitle}>
-              🔄 Lecture automatique en boucle activée • 📡 Contrôle à distance
-            </Text>
-          </View>
+          <Text style={styles.sectionTitle}>Présentations récentes</Text>
           
-          {connectionStatus === 'not_configured' ? (
-            <View style={styles.configurationNeeded}>
-              <Settings size={64} color="#6b7280" />
-              <Text style={styles.configTitle}>Configuration requise</Text>
-              <Text style={styles.configMessage}>
-                Configurez l'URL de votre serveur pour accéder aux présentations
-              </Text>
-              <TouchableOpacity
-                style={styles.configButton}
-                onPress={goToSettings}
-                accessible={true}
-                accessibilityLabel="Configurer le serveur"
-                accessibilityRole="button"
-              >
-                <Settings size={20} color="#ffffff" />
-                <Text style={styles.configButtonText}>Configurer le serveur</Text>
-              </TouchableOpacity>
-            </View>
-          ) : connectionStatus === 'disconnected' ? (
-            <View style={styles.disconnectedState}>
-              <WifiOff size={64} color="#ef4444" />
-              <Text style={styles.disconnectedTitle}>Connexion impossible</Text>
-              <Text style={styles.disconnectedMessage}>
-                Impossible de se connecter au serveur. Vérifiez:
-                {'\n'}• L'URL du serveur dans les paramètres
-                {'\n'}• Que le serveur est accessible
-                {'\n'}• Votre connexion réseau
-              </Text>
-              <View style={styles.actionButtons}>
+          {recentPresentations.length > 0 ? (
+            <View style={styles.presentationsGrid}>
+              {recentPresentations.map((presentation) => (
                 <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleManualRefresh}
-                  accessible={true}
-                  accessibilityLabel="Réessayer la connexion"
-                  accessibilityRole="button"
+                  key={presentation.id}
+                  style={styles.presentationCard}
+                  onPress={() => playPresentation(presentation)}
+                  activeOpacity={0.8}
                 >
-                  <RefreshCw size={20} color="#ffffff" />
-                  <Text style={styles.retryButtonText}>Réessayer</Text>
+                  <View style={styles.presentationCardContent}>
+                    <View style={styles.presentationIconContainer}>
+                      <LinearGradient
+                        colors={['#4f46e5', '#7c3aed']}
+                        style={styles.presentationIcon}
+                      >
+                        <Monitor size={20} color="#ffffff" />
+                      </LinearGradient>
+                    </View>
+                    
+                    <View style={styles.presentationInfo}>
+                      <Text style={styles.presentationTitle} numberOfLines={1}>
+                        {presentation.name}
+                      </Text>
+                      
+                      <View style={styles.presentationMeta}>
+                        <View style={styles.metaItem}>
+                          <Monitor size={12} color="#9ca3af" />
+                          <Text style={styles.metaText}>
+                            {presentation.slide_count} slide{presentation.slide_count > 1 ? 's' : ''}
+                          </Text>
+                        </View>
+                        
+                        <View style={styles.metaItem}>
+                          <Clock size={12} color="#9ca3af" />
+                          <Text style={styles.metaText}>
+                            {new Date(presentation.created_at).toLocaleDateString()}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.presentationAction}>
+                      <Play size={16} color="#3b82f6" />
+                    </View>
+                  </View>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.settingsButton}
-                  onPress={goToSettings}
-                  accessible={true}
-                  accessibilityLabel="Aller aux paramètres"
-                  accessibilityRole="button"
-                >
-                  <Settings size={20} color="#ffffff" />
-                  <Text style={styles.settingsButtonText}>Paramètres</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : presentations.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Monitor size={64} color="#6b7280" />
-              <Text style={styles.emptyTitle}>Aucune présentation</Text>
-              <Text style={styles.emptyMessage}>
-                Aucune présentation disponible sur le serveur.
-                {'\n'}Créez des présentations depuis votre interface web.
-              </Text>
-              <TouchableOpacity
-                style={styles.refreshButton}
-                onPress={handleManualRefresh}
-                accessible={true}
-                accessibilityLabel="Actualiser la liste"
-                accessibilityRole="button"
-              >
-                <RefreshCw size={20} color="#ffffff" />
-                <Text style={styles.refreshButtonText}>Actualiser</Text>
-              </TouchableOpacity>
+              ))}
             </View>
           ) : (
-            <View style={styles.presentationsGrid}>
-              {presentations.map((presentation, index) => 
-                renderPresentationCard(presentation, index)
-              )}
+            <View style={styles.emptyState}>
+              <Monitor size={48} color="#6b7280" />
+              <Text style={styles.emptyTitle}>Aucune présentation récente</Text>
+              <Text style={styles.emptyMessage}>
+                Les présentations que vous visualisez apparaîtront ici.
+              </Text>
             </View>
           )}
         </View>
-
-        <View style={styles.infoSection}>
-          <LinearGradient
-            colors={['#43e97b', '#38f9d7']}
-            style={styles.infoCard}
-          >
-            <Monitor size={32} color="#ffffff" />
-            <Text style={styles.infoTitle}>Application Enhanced avec Contrôle à Distance</Text>
-            <Text style={styles.infoText}>
-              Cette application se connecte à votre serveur de présentations.
-              {'\n'}Serveur: {apiService.getServerUrl() || 'Non configuré'}
-              {'\n'}Device ID: {apiService.getDeviceId()}
-              {'\n'}Statut: {deviceStatus}
-              {'\n'}Surveillance: {assignmentCheckStarted ? 'Active' : 'Inactive'}
-              {'\n'}Mode: Lecture automatique en boucle
-              {'\n'}Contrôle à distance: Activé
-              {'\n'}Mode anti-veille: {keepAwakeEnabled ? 'Activé' : 'Désactivé'}
-              {defaultPresentation && '\n'}Présentation par défaut: Configurée
-              {currentPresentationInfo.name && `\n'}En cours: ${currentPresentationInfo.name}`}
+        
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Contrôle à distance</Text>
+          
+          <View style={styles.remoteControlCard}>
+            <View style={styles.remoteControlHeader}>
+              <Radio size={20} color={webSocketStatus === 'connected' ? "#10b981" : "#6b7280"} />
+              <Text style={styles.remoteControlTitle}>
+                WebSocket {webSocketStatus === 'connected' ? 'connecté' : 'déconnecté'}
+              </Text>
+            </View>
+            
+            <Text style={styles.remoteControlDescription}>
+              {webSocketStatus === 'connected' 
+                ? "Votre appareil est connecté au serveur WebSocket et peut recevoir des commandes en temps réel."
+                : "Votre appareil n'est pas connecté au serveur WebSocket. Les commandes à distance utiliseront le mode HTTP."}
             </Text>
-          </LinearGradient>
+            
+            <TouchableOpacity 
+              style={[
+                styles.remoteControlButton,
+                webSocketStatus === 'connected' ? styles.remoteControlButtonConnected : styles.remoteControlButtonDisconnected
+              ]}
+              onPress={async () => {
+                if (webSocketStatus !== 'connected') {
+                  try {
+                    setWebSocketStatus('connecting');
+                    await initWebSocketService();
+                    setWebSocketStatus('connected');
+                    Alert.alert(
+                      'WebSocket connecté',
+                      'Connexion au serveur WebSocket établie avec succès.',
+                      [{ text: 'OK' }]
+                    );
+                  } catch (error) {
+                    console.error('Error connecting to WebSocket server:', error);
+                    setWebSocketStatus('disconnected');
+                    Alert.alert(
+                      'Erreur de connexion',
+                      'Impossible de se connecter au serveur WebSocket.',
+                      [{ text: 'OK' }]
+                    );
+                  }
+                } else {
+                  const wsService = getWebSocketService();
+                  if (wsService) {
+                    wsService.disconnect();
+                    setWebSocketStatus('disconnected');
+                    Alert.alert(
+                      'WebSocket déconnecté',
+                      'Déconnexion du serveur WebSocket effectuée.',
+                      [{ text: 'OK' }]
+                    );
+                  }
+                }
+              }}
+            >
+              <Text style={styles.remoteControlButtonText}>
+                {webSocketStatus === 'connected' 
+                  ? 'Déconnecter' 
+                  : (webSocketStatus === 'connecting' ? 'Connexion...' : 'Connecter')}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
-
-      {/* Notification discrète pour présentation par défaut */}
-      {renderDefaultPresentationPrompt()}
     </View>
   );
 }
@@ -1118,621 +542,364 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0a0a0a',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  loadingGradient: {
-    padding: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    margin: 20,
+    backgroundColor: '#0a0a0a',
   },
   loadingText: {
     color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '600',
     marginTop: 16,
-    textAlign: 'center',
-  },
-  loadingSubtext: {
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: 14,
-    marginTop: 8,
-    textAlign: 'center',
+    fontSize: 16,
   },
   scrollContent: {
-    paddingBottom: 20,
-  },
-  headerGradient: {
-    paddingTop: 60,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
+    padding: 20,
   },
   header: {
-    alignItems: 'center',
-  },
-  headerContent: {
-    alignItems: 'center',
+    marginBottom: 24,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 8,
-    textAlign: 'center',
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#9ca3af',
     marginBottom: 16,
-    textAlign: 'center',
   },
-  headerButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  refreshButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 25,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+  statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 16,
   },
-  focusedRefreshButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    borderWidth: 4,
-    borderColor: '#ffffff',
-    transform: [{ scale: 1.1 }],
-    elevation: 8,
-    shadowColor: '#ffffff',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  refreshButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  spinning: {
-    transform: [{ rotate: '360deg' }],
-  },
-  statusCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 20,
-    marginTop: -20,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  deviceStatusCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    borderLeftWidth: 4,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  statusHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
-    flex: 1,
-  },
-  serverUrl: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontFamily: 'monospace',
-    marginBottom: 4,
-  },
-  configHint: {
-    fontSize: 12,
-    color: '#9ca3af',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  assignmentStatus: {
-    fontSize: 12,
-    color: '#10b981',
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  currentPresentationInfo: {
-    marginTop: 8,
-    padding: 8,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-  },
-  currentPresentationName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 4,
-  },
-  currentSlideInfo: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  deviceId: {
-    fontSize: 12,
-    color: '#9ca3af',
-    fontFamily: 'monospace',
-  },
-  deviceControls: {
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  keepAwakeControl: {
+  statusItem: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  keepAwakeLabel: {
-    fontSize: 12,
-    color: '#6b7280',
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     marginRight: 8,
   },
-  keepAwakeIcon: {
-    marginLeft: 4,
+  statusText: {
+    fontSize: 12,
+    color: '#9ca3af',
   },
-  assignedSection: {
-    paddingHorizontal: 20,
+  section: {
     marginBottom: 24,
   },
-  assignedTitle: {
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#1e293b',
-    marginBottom: 12,
+    color: '#ffffff',
   },
-  assignedCard: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  assignedGradient: {
-    padding: 20,
-    minHeight: 140,
-  },
-  assignedHeader: {
+  assignedBadge: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  assignedBadges: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  autoPlayBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.3)',
-    borderRadius: 12,
+    backgroundColor: '#4f46e5',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  loopBadge: {
-    backgroundColor: 'rgba(59, 130, 246, 0.3)',
     borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    marginLeft: 12,
+  },
+  assignedBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   defaultBadge: {
-    backgroundColor: 'rgba(139, 92, 246, 0.3)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    backgroundColor: '#0ea5e9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 12,
   },
-  badgeText: {
+  defaultBadgeText: {
     color: '#ffffff',
-    fontSize: 10,
-    fontWeight: 'bold',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
-  assignedName: {
+  assignedPresentationCard: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  assignedCardGradient: {
+    borderRadius: 12,
+  },
+  assignedCardContent: {
+    flexDirection: 'row',
+    padding: 16,
+  },
+  assignedCardInfo: {
+    flex: 1,
+  },
+  assignedCardTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 6,
-  },
-  assignedDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 12,
-  },
-  assignedFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  assignedMode: {
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  assignedPlayButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 20,
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  section: {
-    padding: 20,
-  },
-  sectionHeader: {
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    textAlign: 'center',
     marginBottom: 4,
   },
-  sectionSubtitle: {
+  assignedCardDescription: {
     fontSize: 14,
-    color: '#10b981',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  presentationsGrid: {
-    gap: 16,
-  },
-  presentationCard: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  cardGradient: {
-    padding: 24,
-    minHeight: 220,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  slideCountBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  slideCountText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  cardContent: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  presentationTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 8,
-    lineHeight: 26,
-  },
-  presentationDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    lineHeight: 20,
+    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 12,
   },
-  autoLoopIndicator: {
+  assignedCardMeta: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  metaTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.3)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    alignSelf: 'flex-start',
-    gap: 4,
+    borderRadius: 4,
   },
-  autoLoopText: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  createdDate: {
-    color: 'rgba(255, 255, 255, 0.8)',
+  metaTagText: {
+    color: '#ffffff',
     fontSize: 12,
-    fontWeight: '500',
+    marginLeft: 4,
   },
-  playButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 25,
-    width: 40,
-    height: 40,
+  assignedCardAction: {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  focusedCard: {
-    borderWidth: 4,
-    borderColor: '#3b82f6',
-    transform: [{ scale: 1.05 }],
-    elevation: 16,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-  },
-  focusedPlayButton: {
-    backgroundColor: 'rgba(59, 130, 246, 0.8)',
-    transform: [{ scale: 1.1 }],
-  },
-  configurationNeeded: {
+  playButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
   },
-  configTitle: {
-    fontSize: 20,
+  defaultPresentationCard: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  defaultCardGradient: {
+    borderRadius: 12,
+  },
+  defaultCardContent: {
+    flexDirection: 'row',
+    padding: 16,
+  },
+  defaultCardInfo: {
+    flex: 1,
+  },
+  defaultCardTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#1e293b',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  defaultCardDescription: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: 12,
+  },
+  defaultCardMeta: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  defaultCardAction: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  presentationsGrid: {
+    gap: 12,
+  },
+  presentationCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  presentationCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  presentationIconContainer: {
+    marginRight: 12,
+  },
+  presentationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  presentationInfo: {
+    flex: 1,
+  },
+  presentationTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  presentationMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginLeft: 4,
+  },
+  presentationAction: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    borderRadius: 16,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
     marginTop: 16,
     marginBottom: 8,
+  },
+  emptyMessage: {
+    fontSize: 14,
+    color: '#9ca3af',
     textAlign: 'center',
   },
-  configMessage: {
-    fontSize: 14,
-    color: '#6b7280',
+  notConfiguredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  notConfiguredTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  notConfiguredText: {
+    fontSize: 16,
+    color: '#9ca3af',
     textAlign: 'center',
     marginBottom: 24,
-    lineHeight: 20,
   },
   configButton: {
     backgroundColor: '#3b82f6',
-    borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    borderRadius: 8,
   },
   configButtonText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
   },
-  disconnectedState: {
-    alignItems: 'center',
-    padding: 40,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  disconnectedTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#ef4444',
-    marginTop: 16,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  disconnectedMessage: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 20,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  retryButton: {
-    backgroundColor: '#10b981',
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  retryButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  settingsButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  settingsButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  emptyState: {
-    alignItems: 'center',
-    padding: 40,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    marginTop: 16,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptyMessage: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  infoSection: {
-    padding: 20,
-  },
-  infoCard: {
-    padding: 24,
-    borderRadius: 20,
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  infoTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginTop: 12,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  infoText: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  promptOverlay: {
-    position: 'absolute',
-    top: 100,
-    right: 20,
-    zIndex: 1000,
-  },
-  promptCard: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    elevation: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    maxWidth: 320,
-  },
-  promptGradient: {
-    padding: 16,
-  },
-  promptHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  promptTitle: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: 'bold',
+  errorContainer: {
     flex: 1,
-    marginLeft: 8,
-  },
-  promptCloseButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
-    width: 24,
-    height: 24,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
-  promptCloseText: {
-    color: '#ffffff',
-    fontSize: 16,
+  errorTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
+    color: '#ffffff',
+    marginTop: 16,
+    marginBottom: 8,
   },
-  promptMessage: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontSize: 12,
-    marginBottom: 12,
-    lineHeight: 16,
+  errorText: {
+    fontSize: 16,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginBottom: 24,
   },
-  promptActions: {
+  errorButtonsContainer: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 16,
   },
-  promptButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  errorButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    flex: 1,
+    gap: 8,
   },
-  promptCancelButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  settingsButton: {
+    backgroundColor: '#6b7280',
   },
-  promptButtonText: {
+  errorButtonText: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: '600',
-    textAlign: 'center',
-    flex: 1,
+  },
+  remoteControlCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+  },
+  remoteControlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  remoteControlTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginLeft: 8,
+  },
+  remoteControlDescription: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  remoteControlButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  remoteControlButtonConnected: {
+    backgroundColor: '#ef4444',
+  },
+  remoteControlButtonDisconnected: {
+    backgroundColor: '#10b981',
+  },
+  remoteControlButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
 });

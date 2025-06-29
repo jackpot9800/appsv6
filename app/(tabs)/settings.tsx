@@ -27,10 +27,12 @@ import {
   Zap,
   Play,
   Pause,
-  Moon
+  Moon,
+  Radio
 } from 'lucide-react-native';
 import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
+import { getWebSocketService, initWebSocketService } from '@/services/WebSocketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { activateKeepAwake, deactivateKeepAwake, useKeepAwake } from 'expo-keep-awake';
 
@@ -43,6 +45,7 @@ const STORAGE_KEYS = {
   ASSIGNED_PRESENTATION: 'assigned_presentation',
   DEFAULT_PRESENTATION: 'default_presentation',
   KEEP_AWAKE_ENABLED: 'keep_awake_enabled',
+  WEBSOCKET_ENABLED: 'websocket_enabled',
 };
 
 // Import conditionnel de TVEventHandler
@@ -77,6 +80,10 @@ export default function SettingsScreen() {
   
   // État pour le mode anti-veille
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
+  
+  // État pour le WebSocket
+  const [webSocketEnabled, setWebSocketEnabled] = useState(true);
+  const [webSocketStatus, setWebSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   
   // Utiliser le hook useKeepAwake si activé
   if (keepAwakeEnabled && Platform.OS !== 'web') {
@@ -144,7 +151,7 @@ export default function SettingsScreen() {
   };
 
   const handleNavigateDown = () => {
-    const maxIndex = 11; // Ajusté pour inclure les nouveaux paramètres
+    const maxIndex = 12; // Ajusté pour inclure les nouveaux paramètres
     if (focusedIndex < maxIndex) {
       setFocusedIndex(focusedIndex + 1);
     }
@@ -196,6 +203,9 @@ export default function SettingsScreen() {
       case 11:
         toggleKeepAwake();
         break;
+      case 12:
+        toggleWebSocket();
+        break;
     }
   };
 
@@ -218,6 +228,12 @@ export default function SettingsScreen() {
       if (status) {
         setDeviceStatus(status.status);
       }
+      
+      // Vérifier le statut WebSocket
+      const wsService = getWebSocketService();
+      if (wsService) {
+        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
+      }
     } catch (error) {
       console.error('Error loading debug info:', error);
     }
@@ -231,12 +247,14 @@ export default function SettingsScreen() {
       const autoRestart = await AsyncStorage.getItem('settings_auto_restart');
       const memoryOptimization = await AsyncStorage.getItem('settings_memory_optimization');
       const keepAwake = await AsyncStorage.getItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED);
+      const webSocket = await AsyncStorage.getItem(STORAGE_KEYS.WEBSOCKET_ENABLED);
       
       setRemoteControlEnabled(remoteControl !== 'false');
       setStatusReportingEnabled(statusReporting !== 'false');
       setAutoRestartEnabled(autoRestart !== 'false');
       setMemoryOptimizationEnabled(memoryOptimization !== 'false');
       setKeepAwakeEnabled(keepAwake !== 'false');
+      setWebSocketEnabled(webSocket !== 'false');
     } catch (error) {
       console.error('Error loading advanced settings:', error);
     }
@@ -249,6 +267,7 @@ export default function SettingsScreen() {
       await AsyncStorage.setItem('settings_auto_restart', autoRestartEnabled.toString());
       await AsyncStorage.setItem('settings_memory_optimization', memoryOptimizationEnabled.toString());
       await AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, keepAwakeEnabled.toString());
+      await AsyncStorage.setItem(STORAGE_KEYS.WEBSOCKET_ENABLED, webSocketEnabled.toString());
       
       // Appliquer le paramètre de veille immédiatement
       if (Platform.OS !== 'web') {
@@ -256,6 +275,23 @@ export default function SettingsScreen() {
           activateKeepAwake();
         } else {
           deactivateKeepAwake();
+        }
+      }
+      
+      // Appliquer le paramètre WebSocket immédiatement
+      if (webSocketEnabled) {
+        try {
+          await initWebSocketService();
+          setWebSocketStatus('connected');
+        } catch (error) {
+          console.error('Error initializing WebSocket service:', error);
+          setWebSocketStatus('disconnected');
+        }
+      } else {
+        const wsService = getWebSocketService();
+        if (wsService) {
+          wsService.disconnect();
+          setWebSocketStatus('disconnected');
         }
       }
       
@@ -291,6 +327,32 @@ export default function SettingsScreen() {
     
     // Sauvegarder le paramètre
     AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, newValue.toString());
+  };
+  
+  // Fonction pour activer/désactiver le WebSocket
+  const toggleWebSocket = async () => {
+    const newValue = !webSocketEnabled;
+    setWebSocketEnabled(newValue);
+    
+    if (newValue) {
+      try {
+        setWebSocketStatus('connecting');
+        await initWebSocketService();
+        setWebSocketStatus('connected');
+      } catch (error) {
+        console.error('Error initializing WebSocket service:', error);
+        setWebSocketStatus('disconnected');
+      }
+    } else {
+      const wsService = getWebSocketService();
+      if (wsService) {
+        wsService.disconnect();
+        setWebSocketStatus('disconnected');
+      }
+    }
+    
+    // Sauvegarder le paramètre
+    AsyncStorage.setItem(STORAGE_KEYS.WEBSOCKET_ENABLED, newValue.toString());
   };
 
   const testConnection = async (url: string) => {
@@ -341,7 +403,7 @@ export default function SettingsScreen() {
             
             Alert.alert(
               'Test de connexion réussi',
-              `Connexion au serveur établie avec succès !\n\nVersion API: ${data.version || 'N/A'}\nStatut: ${data.api_status || data.status || 'running'}`,
+              `Connexion au serveur établie avec succès !\n\nVersion API: ${data.version || 'N/A'}\nStatut: ${data.api_status || data.status || 'running'}\nFuseau horaire: ${data.timezone || 'N/A'}`,
               [{ text: 'OK' }]
             );
             return true;
@@ -390,6 +452,18 @@ export default function SettingsScreen() {
         setOriginalUrl(serverUrl.trim());
         setConnectionStatus('success');
         await loadDebugInfo();
+        
+        // Initialiser le service WebSocket si activé
+        if (webSocketEnabled) {
+          try {
+            setWebSocketStatus('connecting');
+            await initWebSocketService();
+            setWebSocketStatus('connected');
+          } catch (error) {
+            console.error('Error initializing WebSocket service:', error);
+            setWebSocketStatus('disconnected');
+          }
+        }
         
         Alert.alert(
           'Configuration sauvegardée',
@@ -483,6 +557,18 @@ export default function SettingsScreen() {
       if (registrationOk) {
         await loadDebugInfo();
         
+        // Initialiser le service WebSocket si activé
+        if (webSocketEnabled) {
+          try {
+            setWebSocketStatus('connecting');
+            await initWebSocketService();
+            setWebSocketStatus('connected');
+          } catch (error) {
+            console.error('Error initializing WebSocket service:', error);
+            setWebSocketStatus('disconnected');
+          }
+        }
+        
         Alert.alert(
           'Enregistrement réussi !',
           `L'appareil a été enregistré avec succès sur le serveur.\n\nID: ${apiService.getDeviceId()}\n\nVous pouvez maintenant utiliser toutes les fonctionnalités de l'application.`,
@@ -512,6 +598,13 @@ export default function SettingsScreen() {
             await apiService.resetDevice();
             await loadDebugInfo();
             
+            // Déconnecter le WebSocket
+            const wsService = getWebSocketService();
+            if (wsService) {
+              wsService.disconnect();
+              setWebSocketStatus('disconnected');
+            }
+            
             Alert.alert(
               'Paramètres réinitialisés',
               'La configuration a été effacée. Vous devez reconfigurer l\'URL du serveur.',
@@ -535,6 +628,14 @@ export default function SettingsScreen() {
           onPress: async () => {
             await apiService.resetDevice();
             await loadDebugInfo();
+            
+            // Déconnecter le WebSocket
+            const wsService = getWebSocketService();
+            if (wsService) {
+              wsService.disconnect();
+              setWebSocketStatus('disconnected');
+            }
+            
             Alert.alert(
               'Appareil réinitialisé',
               'L\'enregistrement de l\'appareil a été supprimé. Utilisez le bouton d\'enregistrement pour le réenregistrer.',
@@ -581,6 +682,26 @@ export default function SettingsScreen() {
 
     return (
       <View style={[styles.deviceStatusContainer, { borderColor: config.color }]}>
+        <IconComponent size={20} color={config.color} />
+        <Text style={[styles.statusText, { color: config.color }]}>
+          {config.text}
+        </Text>
+      </View>
+    );
+  };
+  
+  const renderWebSocketStatus = () => {
+    const statusConfig: {[key: string]: {color: string, text: string, icon: any}} = {
+      disconnected: { color: '#6b7280', text: 'Déconnecté', icon: WifiOff },
+      connecting: { color: '#f59e0b', text: 'Connexion...', icon: Wifi },
+      connected: { color: '#10b981', text: 'Connecté', icon: Radio },
+    };
+
+    const config = statusConfig[webSocketStatus];
+    const IconComponent = config.icon;
+
+    return (
+      <View style={[styles.webSocketStatusContainer, { borderColor: config.color }]}>
         <IconComponent size={20} color={config.color} />
         <Text style={[styles.statusText, { color: config.color }]}>
           {config.text}
@@ -826,6 +947,16 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 
+                <View style={styles.infoRow}>
+                  <Radio size={20} color={webSocketEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>WebSocket</Text>
+                    <Text style={styles.infoValue}>
+                      {webSocketEnabled ? (webSocketStatus === 'connected' ? 'Connecté' : 'Activé') : 'Désactivé'}
+                    </Text>
+                  </View>
+                </View>
+                
                 {debugInfo.connectionAttempts > 0 && (
                   <View style={styles.infoRow}>
                     <AlertCircle size={20} color={debugInfo.connectionAttempts > 3 ? "#ef4444" : "#f59e0b"} />
@@ -996,6 +1127,30 @@ export default function SettingsScreen() {
                 />
               </View>
               
+              <View style={styles.settingRow}>
+                <View style={styles.settingLabelContainer}>
+                  <Radio size={20} color={webSocketEnabled ? "#10b981" : "#6b7280"} />
+                  <View style={styles.settingTextContainer}>
+                    <Text style={styles.settingLabel}>WebSocket</Text>
+                    <Text style={styles.settingDescription}>
+                      Permet le contrôle en temps réel et les notifications push
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={webSocketEnabled}
+                  onValueChange={toggleWebSocket}
+                  trackColor={{ false: '#6b7280', true: '#10b981' }}
+                  thumbColor={webSocketEnabled ? '#ffffff' : '#f4f3f4'}
+                  ios_backgroundColor="#6b7280"
+                  style={[
+                    styles.settingSwitch,
+                    focusedIndex === 12 && styles.focusedSwitch
+                  ]}
+                  onFocus={() => setFocusedIndex(12)}
+                />
+              </View>
+              
               <TouchableOpacity
                 style={styles.saveAdvancedButton}
                 onPress={saveAdvancedSettings}
@@ -1031,7 +1186,12 @@ export default function SettingsScreen() {
             • Fonctionne même en arrière-plan{`\n`}
             • Peut être désactivé dans les paramètres avancés{`\n\n`}
             
-            <Text style={styles.helpBold}>5. En cas de problème avec OVH :</Text>{`\n`}
+            <Text style={styles.helpBold}>5. WebSocket :</Text>{`\n`}
+            • Permet le contrôle en temps réel de l'appareil{`\n`}
+            • Nécessite un serveur WebSocket configuré{`\n`}
+            • Réduit la latence des commandes à distance{`\n\n`}
+            
+            <Text style={styles.helpBold}>6. En cas de problème avec OVH :</Text>{`\n`}
             • Vérifiez les logs PHP sur votre hébergement OVH{`\n`}
             • Testez l'URL dans un navigateur web{`\n`}
             • Assurez-vous que les fichiers PHP ont les bonnes permissions{`\n`}
@@ -1148,6 +1308,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
+  },
+  webSocketStatusContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    marginLeft: 12,
   },
   refreshStatusButton: {
     backgroundColor: '#3b82f6',

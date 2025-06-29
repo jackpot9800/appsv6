@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiService } from './ApiService';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import { getWebSocketService, sendStatusViaWebSocket } from './WebSocketService';
 
 export interface DeviceStatus {
   device_id: string;
@@ -179,43 +180,53 @@ class StatusService {
 
       const status = await this.getCurrentStatus();
       
-      const response = await fetch(`${apiService.getServerUrl()}/heartbeat-receiver.php`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Device-ID': apiService.getDeviceId(),
-          'X-Device-Type': 'firetv',
-          'X-Device-Name': apiService.getDeviceName(),
-          'X-App-Version': '2.0.0',
-          'X-Local-IP': this.localIpAddress || '',
-          'X-External-IP': this.externalIpAddress || '',
-        },
-        body: JSON.stringify(status),
-      });
+      // Envoyer le statut via WebSocket si disponible
+      const wsSuccess = sendStatusViaWebSocket(status);
+      
+      // Si l'envoi WebSocket a échoué ou n'est pas disponible, utiliser HTTP
+      if (!wsSuccess) {
+        const response = await fetch(`${apiService.getServerUrl()}/heartbeat-receiver.php`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Device-ID': apiService.getDeviceId(),
+            'X-Device-Type': 'firetv',
+            'X-Device-Name': apiService.getDeviceName(),
+            'X-App-Version': '2.0.0',
+            'X-Local-IP': this.localIpAddress || '',
+            'X-External-IP': this.externalIpAddress || '',
+          },
+          body: JSON.stringify(status),
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Heartbeat sent successfully');
-        
-        // Synchroniser l'heure locale avec le serveur si disponible
-        if (data.server_time) {
-          console.log('Server time received:', data.server_time);
-          // Ici, vous pourriez ajuster l'heure locale si nécessaire
-        }
-        
-        // Traiter les commandes en attente
-        if (data.commands && data.commands.length > 0) {
-          console.log('Received commands:', data.commands.length);
-          for (const command of data.commands) {
-            await this.executeRemoteCommand(command);
-            await this.acknowledgeCommand(command.id);
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Heartbeat sent successfully');
+          
+          // Synchroniser l'heure locale avec le serveur si disponible
+          if (data.server_time) {
+            console.log('Server time received:', data.server_time);
+            // Ici, vous pourriez ajuster l'heure locale si nécessaire
           }
+          
+          // Traiter les commandes en attente
+          if (data.commands && data.commands.length > 0) {
+            console.log('Received commands:', data.commands.length);
+            for (const command of data.commands) {
+              await this.handleRemoteCommand(command);
+              await this.acknowledgeCommand(command.id);
+            }
+          }
+          
+          // Mettre à jour le timestamp du dernier heartbeat réussi
+          this.lastHeartbeatSuccess = Date.now();
+        } else {
+          throw new Error(`Server returned status ${response.status}`);
         }
-        
-        // Mettre à jour le timestamp du dernier heartbeat réussi
-        this.lastHeartbeatSuccess = Date.now();
       } else {
-        throw new Error(`Server returned status ${response.status}`);
+        // WebSocket a réussi
+        console.log('Heartbeat sent successfully via WebSocket');
+        this.lastHeartbeatSuccess = Date.now();
       }
     } catch (error) {
       console.log('Failed to send heartbeat:', error);
@@ -247,7 +258,7 @@ class StatusService {
         const data = await response.json();
         if (data.commands && data.commands.length > 0) {
           for (const command of data.commands) {
-            await this.executeRemoteCommand(command);
+            await this.handleRemoteCommand(command);
             await this.acknowledgeCommand(command.id);
           }
         }
@@ -260,7 +271,7 @@ class StatusService {
   /**
    * Exécute une commande à distance
    */
-  private async executeRemoteCommand(command: RemoteCommand) {
+  public async handleRemoteCommand(command: RemoteCommand) {
     console.log('=== EXECUTING REMOTE COMMAND ===', command);
 
     if (this.onRemoteCommandCallback) {
@@ -387,6 +398,9 @@ class StatusService {
     if (this.onStatusUpdateCallback) {
       this.onStatusUpdateCallback(this.currentStatus);
     }
+    
+    // Envoyer le statut via WebSocket si connecté
+    sendStatusViaWebSocket(this.currentStatus);
   }
 
   /**
