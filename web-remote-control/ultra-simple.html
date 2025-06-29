@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Ultra Simple</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #log {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Ultra Simple</h1>
+    
+    <div id="status" class="disconnected">Déconnecté</div>
+    
+    <div>
+        <label for="server-url">URL du serveur:</label>
+        <input type="text" id="server-url" value="ws://localhost:8080" style="width: 300px;">
+        <button id="connect">Connecter</button>
+        <button id="disconnect" disabled>Déconnecter</button>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <label for="message">Message:</label>
+        <input type="text" id="message" value="Hello, WebSocket!" style="width: 300px;">
+        <button id="send" disabled>Envoyer</button>
+    </div>
+    
+    <div id="log"></div>
+    
+    <div style="margin-top: 20px;">
+        <h3>Diagnostic:</h3>
+        <div id="diagnostic"></div>
+    </div>
+    
+    <script>
+        // Éléments DOM
+        const statusDiv = document.getElementById('status');
+        const serverUrlInput = document.getElementById('server-url');
+        const connectButton = document.getElementById('connect');
+        const disconnectButton = document.getElementById('disconnect');
+        const messageInput = document.getElementById('message');
+        const sendButton = document.getElementById('send');
+        const logDiv = document.getElementById('log');
+        const diagnosticDiv = document.getElementById('diagnostic');
+        
+        // WebSocket
+        let socket = null;
+        
+        // Fonctions
+        function updateStatus(status, message) {
+            statusDiv.className = status;
+            statusDiv.textContent = message;
+        }
+        
+        function addLog(message) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateDiagnostic() {
+            // Vérifier le support WebSocket
+            const hasWebSocket = 'WebSocket' in window;
+            
+            // Vérifier si on est en local ou sur un serveur distant
+            const isLocalhost = window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1';
+            
+            // Vérifier le protocole
+            const isSecure = window.location.protocol === 'https:';
+            
+            let diagnosticHTML = `
+                <ul>
+                    <li>Support WebSocket: <strong>${hasWebSocket ? 'Oui' : 'Non'}</strong></li>
+                    <li>Environnement: <strong>${isLocalhost ? 'Local' : 'Distant'}</strong></li>
+                    <li>Protocole: <strong>${window.location.protocol}</strong></li>
+                    <li>Navigateur: <strong>${navigator.userAgent}</strong></li>
+                </ul>
+            `;
+            
+            // Ajouter des avertissements si nécessaire
+            if (!hasWebSocket) {
+                diagnosticHTML += `<p style="color: red;">⚠️ Votre navigateur ne supporte pas WebSocket!</p>`;
+            }
+            
+            if (isSecure && !serverUrlInput.value.startsWith('wss://')) {
+                diagnosticHTML += `<p style="color: orange;">⚠️ Vous utilisez HTTPS mais essayez de vous connecter en WS non sécurisé. Utilisez WSS:// à la place.</p>`;
+            }
+            
+            diagnosticDiv.innerHTML = diagnosticHTML;
+        }
+        
+        function connect() {
+            const url = serverUrlInput.value;
+            
+            if (!url) {
+                addLog('URL du serveur requise');
+                return;
+            }
+            
+            try {
+                updateStatus('connecting', 'Connexion en cours...');
+                addLog(`Tentative de connexion à ${url}...`);
+                
+                socket = new WebSocket(url);
+                
+                socket.onopen = function() {
+                    updateStatus('connected', 'Connecté');
+                    addLog('Connecté au serveur WebSocket');
+                    
+                    connectButton.disabled = true;
+                    disconnectButton.disabled = false;
+                    sendButton.disabled = false;
+                };
+                
+                socket.onmessage = function(event) {
+                    addLog(`Message reçu: ${event.data}`);
+                };
+                
+                socket.onclose = function(event) {
+                    updateStatus('disconnected', 'Déconnecté');
+                    addLog(`Déconnecté du serveur WebSocket (Code: ${event.code}${event.reason ? ', Raison: ' + event.reason : ''})`);
+                    
+                    connectButton.disabled = false;
+                    disconnectButton.disabled = true;
+                    sendButton.disabled = true;
+                    
+                    socket = null;
+                };
+                
+                socket.onerror = function(error) {
+                    addLog(`Erreur WebSocket`);
+                    console.error('Erreur WebSocket:', error);
+                };
+                
+            } catch (error) {
+                updateStatus('disconnected', 'Erreur de connexion');
+                addLog(`Erreur lors de la création de la connexion: ${error.message}`);
+                console.error('Erreur:', error);
+            }
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.close();
+            }
+        }
+        
+        function sendMessage() {
+            if (!socket) {
+                addLog('Non connecté au serveur WebSocket');
+                return;
+            }
+            
+            const message = messageInput.value;
+            
+            if (!message) {
+                addLog('Message requis');
+                return;
+            }
+            
+            try {
+                socket.send(message);
+                addLog(`Message envoyé: ${message}`);
+            } catch (error) {
+                addLog(`Erreur lors de l'envoi du message: ${error.message}`);
+                console.error('Erreur:', error);
+            }
+        }
+        
+        // Événements
+        connectButton.addEventListener('click', connect);
+        disconnectButton.addEventListener('click', disconnect);
+        sendButton.addEventListener('click', sendMessage);
+        
+        // Initialisation
+        updateDiagnostic();
+    </script>
+</body>
+</html>
