@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test WebSocket Local</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .column {
+            flex: 1;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #log {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+            font-family: monospace;
+        }
+        .sent {
+            color: blue;
+        }
+        .received {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+        .info {
+            color: black;
+        }
+        button {
+            padding: 8px 12px;
+            margin: 5px 0;
+            cursor: pointer;
+        }
+        input, select {
+            padding: 8px;
+            margin: 5px 0;
+        }
+        .full-width {
+            width: 100%;
+        }
+        .panel {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        h2 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test WebSocket Local</h1>
+    
+    <div id="status" class="disconnected">Déconnecté</div>
+    
+    <div class="container">
+        <div class="column">
+            <div class="panel">
+                <h2>Configuration</h2>
+                <div>
+                    <label for="server-url">URL du serveur:</label>
+                    <input type="text" id="server-url" value="ws://localhost:8080" class="full-width">
+                </div>
+                
+                <div>
+                    <label for="client-type">Type de client:</label>
+                    <select id="client-type" class="full-width">
+                        <option value="device">Appareil</option>
+                        <option value="admin">Administrateur</option>
+                    </select>
+                </div>
+                
+                <div id="device-id-container">
+                    <label for="device-id">ID de l'appareil:</label>
+                    <input type="text" id="device-id" value="firetv_test_123" class="full-width">
+                </div>
+                
+                <div style="margin-top: 10px;">
+                    <button id="connect" class="full-width">Connecter</button>
+                    <button id="disconnect" disabled class="full-width">Déconnecter</button>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Messages</h2>
+                <div>
+                    <label for="message-type">Type de message:</label>
+                    <select id="message-type" class="full-width">
+                        <option value="ping">Ping</option>
+                        <option value="register_device">Enregistrer appareil</option>
+                        <option value="register_admin">Enregistrer admin</option>
+                        <option value="device_status">Statut appareil</option>
+                        <option value="admin_command">Commande admin</option>
+                        <option value="custom">Message personnalisé</option>
+                    </select>
+                </div>
+                
+                <div id="message-params-container" style="margin-top: 10px;">
+                    <!-- Les paramètres seront ajoutés dynamiquement ici -->
+                </div>
+                
+                <div style="margin-top: 10px;">
+                    <label for="message-preview">Aperçu du message:</label>
+                    <textarea id="message-preview" rows="5" class="full-width" readonly></textarea>
+                </div>
+                
+                <div style="margin-top: 10px;">
+                    <button id="send" disabled class="full-width">Envoyer le message</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="column">
+            <div class="panel">
+                <h2>Logs</h2>
+                <div id="log"></div>
+                <button id="clear-log" style="margin-top: 10px;">Effacer les logs</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Éléments DOM
+        const statusDiv = document.getElementById('status');
+        const serverUrlInput = document.getElementById('server-url');
+        const clientTypeSelect = document.getElementById('client-type');
+        const deviceIdContainer = document.getElementById('device-id-container');
+        const deviceIdInput = document.getElementById('device-id');
+        const connectButton = document.getElementById('connect');
+        const disconnectButton = document.getElementById('disconnect');
+        const messageTypeSelect = document.getElementById('message-type');
+        const messageParamsContainer = document.getElementById('message-params-container');
+        const messagePreview = document.getElementById('message-preview');
+        const sendButton = document.getElementById('send');
+        const logDiv = document.getElementById('log');
+        const clearLogButton = document.getElementById('clear-log');
+        
+        // WebSocket
+        let socket = null;
+        
+        // Fonctions
+        function updateStatus(status, message) {
+            statusDiv.className = status;
+            statusDiv.textContent = message;
+        }
+        
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateMessageParams() {
+            const messageType = messageTypeSelect.value;
+            let paramsHTML = '';
+            
+            switch (messageType) {
+                case 'ping':
+                    // Pas de paramètres supplémentaires pour ping
+                    break;
+                    
+                case 'register_device':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-device-id">ID de l'appareil:</label>
+                            <input type="text" id="param-device-id" value="${deviceIdInput.value}" class="full-width">
+                        </div>
+                        <div>
+                            <label for="param-device-name">Nom de l'appareil:</label>
+                            <input type="text" id="param-device-name" value="Fire TV Test" class="full-width">
+                        </div>
+                    `;
+                    break;
+                    
+                case 'register_admin':
+                    // Pas de paramètres supplémentaires pour register_admin
+                    break;
+                    
+                case 'device_status':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-status">Statut:</label>
+                            <select id="param-status" class="full-width">
+                                <option value="online">En ligne</option>
+                                <option value="playing">En diffusion</option>
+                                <option value="paused">En pause</option>
+                                <option value="error">Erreur</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="param-presentation-name">Nom de la présentation:</label>
+                            <input type="text" id="param-presentation-name" value="Présentation de test" class="full-width">
+                        </div>
+                        <div>
+                            <label for="param-slide-index">Index de slide:</label>
+                            <input type="number" id="param-slide-index" value="0" min="0" class="full-width">
+                        </div>
+                        <div>
+                            <label for="param-total-slides">Total slides:</label>
+                            <input type="number" id="param-total-slides" value="10" min="1" class="full-width">
+                        </div>
+                        <div>
+                            <input type="checkbox" id="param-is-looping" checked>
+                            <label for="param-is-looping">Mode boucle</label>
+                        </div>
+                        <div>
+                            <input type="checkbox" id="param-auto-play" checked>
+                            <label for="param-auto-play">Lecture auto</label>
+                        </div>
+                    `;
+                    break;
+                    
+                case 'admin_command':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-target-device-id">ID de l'appareil cible:</label>
+                            <input type="text" id="param-target-device-id" value="firetv_test_123" class="full-width">
+                        </div>
+                        <div>
+                            <label for="param-command">Commande:</label>
+                            <select id="param-command" class="full-width">
+                                <option value="play">Lecture</option>
+                                <option value="pause">Pause</option>
+                                <option value="stop">Arrêt</option>
+                                <option value="restart">Redémarrer présentation</option>
+                                <option value="next_slide">Slide suivante</option>
+                                <option value="prev_slide">Slide précédente</option>
+                                <option value="goto_slide">Aller à une slide</option>
+                                <option value="assign_presentation">Assigner présentation</option>
+                                <option value="reboot">Redémarrer appareil</option>
+                            </select>
+                        </div>
+                        <div id="command-params-container">
+                            <!-- Les paramètres de commande seront ajoutés ici -->
+                        </div>
+                    `;
+                    break;
+                    
+                case 'custom':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-custom-json">JSON personnalisé:</label>
+                            <textarea id="param-custom-json" rows="5" class="full-width">{
+  "type": "custom",
+  "message": "Message personnalisé",
+  "timestamp": "${new Date().toISOString()}"
+}</textarea>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            messageParamsContainer.innerHTML = paramsHTML;
+            
+            // Ajouter des événements pour les paramètres de commande
+            if (messageType === 'admin_command') {
+                const commandSelect = document.getElementById('param-command');
+                commandSelect.addEventListener('change', updateCommandParams);
+                updateCommandParams();
+            }
+            
+            // Mettre à jour l'aperçu du message
+            updateMessagePreview();
+        }
+        
+        function updateCommandParams() {
+            const commandSelect = document.getElementById('param-command');
+            const commandParamsContainer = document.getElementById('command-params-container');
+            
+            if (!commandSelect || !commandParamsContainer) return;
+            
+            const command = commandSelect.value;
+            let paramsHTML = '';
+            
+            switch (command) {
+                case 'goto_slide':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-slide-index">Index de slide:</label>
+                            <input type="number" id="param-slide-index" value="0" min="0" class="full-width">
+                        </div>
+                    `;
+                    break;
+                    
+                case 'assign_presentation':
+                    paramsHTML = `
+                        <div>
+                            <label for="param-presentation-id">ID de présentation:</label>
+                            <input type="number" id="param-presentation-id" value="1" min="1" class="full-width">
+                        </div>
+                        <div>
+                            <input type="checkbox" id="param-auto-play" checked>
+                            <label for="param-auto-play">Lecture auto</label>
+                        </div>
+                        <div>
+                            <input type="checkbox" id="param-loop-mode" checked>
+                            <label for="param-loop-mode">Mode boucle</label>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            commandParamsContainer.innerHTML = paramsHTML;
+            
+            // Mettre à jour l'aperçu du message
+            updateMessagePreview();
+        }
+        
+        function updateMessagePreview() {
+            const messageType = messageTypeSelect.value;
+            let message = {};
+            
+            // Ajouter le type et le timestamp
+            message.type = messageType;
+            message.timestamp = new Date().toISOString();
+            
+            // Ajouter les paramètres spécifiques au type de message
+            switch (messageType) {
+                case 'ping':
+                    // Pas de paramètres supplémentaires pour ping
+                    break;
+                    
+                case 'register_device':
+                    message.device_id = document.getElementById('param-device-id')?.value || deviceIdInput.value;
+                    message.device_name = document.getElementById('param-device-name')?.value || 'Fire TV Test';
+                    break;
+                    
+                case 'register_admin':
+                    // Pas de paramètres supplémentaires pour register_admin
+                    break;
+                    
+                case 'device_status':
+                    message.device_id = deviceIdInput.value;
+                    message.status = document.getElementById('param-status')?.value || 'online';
+                    message.current_presentation_name = document.getElementById('param-presentation-name')?.value || '';
+                    message.current_slide_index = parseInt(document.getElementById('param-slide-index')?.value || 0);
+                    message.total_slides = parseInt(document.getElementById('param-total-slides')?.value || 10);
+                    message.is_looping = document.getElementById('param-is-looping')?.checked || false;
+                    message.auto_play = document.getElementById('param-auto-play')?.checked || false;
+                    break;
+                    
+                case 'admin_command':
+                    message.device_id = document.getElementById('param-target-device-id')?.value || '';
+                    message.command = document.getElementById('param-command')?.value || '';
+                    
+                    // Ajouter les paramètres spécifiques à la commande
+                    const command = document.getElementById('param-command')?.value;
+                    message.parameters = {};
+                    
+                    if (command === 'goto_slide') {
+                        message.parameters.slide_index = parseInt(document.getElementById('param-slide-index')?.value || 0);
+                    } else if (command === 'assign_presentation') {
+                        message.parameters.presentation_id = parseInt(document.getElementById('param-presentation-id')?.value || 1);
+                        message.parameters.auto_play = document.getElementById('param-auto-play')?.checked || false;
+                        message.parameters.loop_mode = document.getElementById('param-loop-mode')?.checked || false;
+                    }
+                    break;
+                    
+                case 'custom':
+                    try {
+                        message = JSON.parse(document.getElementById('param-custom-json').value);
+                    } catch (error) {
+                        message = { error: 'JSON invalide' };
+                    }
+                    break;
+            }
+            
+            // Mettre à jour l'aperçu
+            messagePreview.value = JSON.stringify(message, null, 2);
+        }
+        
+        function connect() {
+            const url = serverUrlInput.value;
+            const clientType = clientTypeSelect.value;
+            const deviceId = deviceIdInput.value;
+            
+            if (!url) {
+                addLog('URL du serveur requise', 'error');
+                return;
+            }
+            
+            if (clientType === 'device' && !deviceId) {
+                addLog('ID de l\'appareil requis pour le type client "appareil"', 'error');
+                return;
+            }
+            
+            try {
+                updateStatus('connecting', 'Connexion en cours...');
+                addLog(`Tentative de connexion à ${url}...`);
+                
+                socket = new WebSocket(url);
+                
+                socket.onopen = function() {
+                    updateStatus('connected', 'Connecté');
+                    addLog('Connecté au serveur WebSocket');
+                    
+                    connectButton.disabled = true;
+                    disconnectButton.disabled = false;
+                    sendButton.disabled = false;
+                    
+                    // Enregistrement automatique
+                    if (clientType === 'device') {
+                        const registerMessage = {
+                            type: 'register_device',
+                            device_id: deviceId,
+                            device_name: `Fire TV ${deviceId}`,
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        socket.send(JSON.stringify(registerMessage));
+                        addLog(`Enregistrement automatique comme appareil: ${deviceId}`, 'sent');
+                    } else if (clientType === 'admin') {
+                        const registerMessage = {
+                            type: 'register_admin',
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        socket.send(JSON.stringify(registerMessage));
+                        addLog('Enregistrement automatique comme administrateur', 'sent');
+                    }
+                };
+                
+                socket.onmessage = function(event) {
+                    addLog(`Message reçu: ${event.data}`, 'received');
+                    
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('Message reçu:', data);
+                    } catch (error) {
+                        console.error('Erreur de parsing JSON:', error);
+                    }
+                };
+                
+                socket.onclose = function(event) {
+                    updateStatus('disconnected', 'Déconnecté');
+                    addLog(`Déconnecté du serveur WebSocket (Code: ${event.code}${event.reason ? ', Raison: ' + event.reason : ''})`);
+                    
+                    connectButton.disabled = false;
+                    disconnectButton.disabled = true;
+                    sendButton.disabled = true;
+                    
+                    socket = null;
+                };
+                
+                socket.onerror = function(error) {
+                    addLog(`Erreur WebSocket`, 'error');
+                    console.error('Erreur WebSocket:', error);
+                };
+                
+            } catch (error) {
+                updateStatus('disconnected', 'Erreur de connexion');
+                addLog(`Erreur lors de la création de la connexion: ${error.message}`, 'error');
+                console.error('Erreur:', error);
+            }
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.close();
+            }
+        }
+        
+        function sendMessage() {
+            if (!socket) {
+                addLog('Non connecté au serveur WebSocket', 'error');
+                return;
+            }
+            
+            try {
+                const message = messagePreview.value;
+                socket.send(message);
+                addLog(`Message envoyé: ${message}`, 'sent');
+            } catch (error) {
+                addLog(`Erreur lors de l'envoi du message: ${error.message}`, 'error');
+                console.error('Erreur:', error);
+            }
+        }
+        
+        function clearLog() {
+            logDiv.innerHTML = '';
+            addLog('Logs effacés');
+        }
+        
+        // Événements
+        clientTypeSelect.addEventListener('change', function() {
+            deviceIdContainer.style.display = this.value === 'device' ? 'block' : 'none';
+            updateMessageParams();
+        });
+        
+        messageTypeSelect.addEventListener('change', updateMessageParams);
+        connectButton.addEventListener('click', connect);
+        disconnectButton.addEventListener('click', disconnect);
+        sendButton.addEventListener('click', sendMessage);
+        clearLogButton.addEventListener('click', clearLog);
+        
+        // Initialisation
+        updateMessageParams();
+        
+        // Ajouter des informations sur le navigateur
+        addLog('Informations navigateur: ' + navigator.userAgent);
+        
+        // Vérifier le support WebSocket
+        if ('WebSocket' in window) {
+            addLog('WebSocket est supporté par ce navigateur');
+        } else {
+            addLog('WebSocket n\'est PAS supporté par ce navigateur', 'error');
+        }
+    </script>
+</body>
+</html>
