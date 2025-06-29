@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { apiService } from './ApiService';
 import { statusService, RemoteCommand } from './StatusService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Interface pour les options du client WebSocket
 interface WebSocketOptions {
@@ -282,18 +283,30 @@ let webSocketServiceInstance: WebSocketService | null = null;
 
 // Fonction pour initialiser le service WebSocket
 export const initWebSocketService = async (): Promise<WebSocketService> => {
+    // Si une instance existe déjà, la déconnecter
     if (webSocketServiceInstance) {
-        return webSocketServiceInstance;
+        webSocketServiceInstance.disconnect();
     }
     
-    // Récupérer l'URL du serveur API
-    const apiUrl = apiService.getServerUrl();
-    if (!apiUrl) {
-        throw new Error('URL du serveur API non configurée');
+    // Vérifier si le WebSocket est activé
+    const webSocketEnabled = await AsyncStorage.getItem('websocket_enabled');
+    if (webSocketEnabled === 'false') {
+        throw new Error('WebSocket désactivé dans les paramètres');
     }
     
-    // Construire l'URL du serveur WebSocket
-    const serverUrl = apiUrl.replace(/^http/, 'ws').replace(/\/index\.php$/, '/websocket');
+    // Récupérer l'URL du serveur WebSocket
+    let serverUrl = await AsyncStorage.getItem('websocket_url');
+    
+    // Si pas d'URL configurée, essayer de la générer à partir de l'URL de l'API
+    if (!serverUrl) {
+        const apiUrl = apiService.getServerUrl();
+        if (apiUrl) {
+            serverUrl = apiUrl.replace(/^http/, 'ws').replace(/\/index\.php$/, '/websocket');
+            await AsyncStorage.setItem('websocket_url', serverUrl);
+        } else {
+            throw new Error('URL du serveur WebSocket non configurée');
+        }
+    }
     
     // Créer l'instance du service
     webSocketServiceInstance = new WebSocketService({
