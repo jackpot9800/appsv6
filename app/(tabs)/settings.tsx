@@ -5,1201 +5,556 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  Alert,
+  Switch,
   ScrollView,
+  Alert,
   ActivityIndicator,
   Platform,
-  Switch,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { 
-  Server, 
-  Wifi, 
-  WifiOff, 
-  Check, 
-  CircleAlert as AlertCircle, 
-  Monitor, 
-  Settings as SettingsIcon, 
-  RefreshCw, 
-  Trash2, 
-  UserPlus, 
-  Activity, 
-  Zap,
-  Play,
-  Pause,
-  Moon,
-  Radio
-} from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
 import { getWebSocketService, initWebSocketService } from '@/services/WebSocketService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { activateKeepAwake, deactivateKeepAwake, useKeepAwake } from 'expo-keep-awake';
-
-// Définition des clés de stockage pour éviter les erreurs
-const STORAGE_KEYS = {
-  SERVER_URL: 'server_url',
-  DEVICE_ID: 'device_id',
-  DEVICE_REGISTERED: 'device_registered',
-  ENROLLMENT_TOKEN: 'enrollment_token',
-  ASSIGNED_PRESENTATION: 'assigned_presentation',
-  DEFAULT_PRESENTATION: 'default_presentation',
-  KEEP_AWAKE_ENABLED: 'keep_awake_enabled',
-  WEBSOCKET_ENABLED: 'websocket_enabled',
-};
-
-// Import conditionnel de TVEventHandler
-let TVEventHandler: any = null;
-if (Platform.OS === 'android' || Platform.OS === 'ios') {
-  try {
-    TVEventHandler = require('react-native').TVEventHandler;
-  } catch (error) {
-    console.log('TVEventHandler not available on this platform');
-  }
-}
+import { Monitor, Server, Radio, Wifi, RefreshCw, Info, Check, X } from 'lucide-react-native';
 
 export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState('');
-  const [originalUrl, setOriginalUrl] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [saving, setSaving] = useState(false);
-  const [registering, setRegistering] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+  const [deviceId, setDeviceId] = useState('');
+  const [isRegistered, setIsRegistered] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [testMessage, setTestMessage] = useState('');
   const [debugInfo, setDebugInfo] = useState<any>(null);
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const [tvEventHandler, setTvEventHandler] = useState<any>(null);
-  
-  // Nouveaux états pour les paramètres avancés
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [remoteControlEnabled, setRemoteControlEnabled] = useState(true);
-  const [statusReportingEnabled, setStatusReportingEnabled] = useState(true);
-  const [autoRestartEnabled, setAutoRestartEnabled] = useState(true);
-  const [memoryOptimizationEnabled, setMemoryOptimizationEnabled] = useState(true);
-  const [deviceStatus, setDeviceStatus] = useState<string>('online');
-  const [connectionError, setConnectionError] = useState<string>('');
-  
-  // État pour le mode anti-veille
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(true);
-  
-  // État pour le WebSocket
   const [webSocketEnabled, setWebSocketEnabled] = useState(true);
-  const [webSocketStatus, setWebSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  
-  // Utiliser le hook useKeepAwake si activé
-  if (keepAwakeEnabled && Platform.OS !== 'web') {
-    useKeepAwake();
-  }
+  const [webSocketUrl, setWebSocketUrl] = useState('');
+  const [webSocketConnected, setWebSocketConnected] = useState(false);
 
   useEffect(() => {
-    loadCurrentSettings();
-    loadDebugInfo();
-    loadAdvancedSettings();
-    
-    // Configuration Fire TV seulement sur les plateformes supportées
-    if (Platform.OS === 'android' && TVEventHandler) {
-      setupFireTVNavigation();
-    }
-
-    return () => {
-      if (tvEventHandler) {
-        try {
-          tvEventHandler.disable();
-        } catch (error) {
-          console.log('Error disabling TV event handler:', error);
-        }
-      }
-    };
+    loadSettings();
   }, []);
 
-  useEffect(() => {
-    setHasChanges(serverUrl !== originalUrl);
-  }, [serverUrl, originalUrl]);
+  const loadSettings = async () => {
+    try {
+      // Charger l'URL du serveur
+      const savedUrl = await AsyncStorage.getItem('server_url');
+      if (savedUrl) {
+        setServerUrl(savedUrl);
+      }
 
-  // Configuration navigation Fire TV avec vérifications
-  const setupFireTVNavigation = () => {
-    if (!TVEventHandler) {
-      console.log('TVEventHandler not available');
+      // Charger le nom de l'appareil
+      const savedName = await AsyncStorage.getItem('device_name');
+      if (savedName) {
+        setDeviceName(savedName);
+      } else {
+        const generatedName = `Fire TV ${Math.floor(Math.random() * 1000)}`;
+        setDeviceName(generatedName);
+        await AsyncStorage.setItem('device_name', generatedName);
+      }
+
+      // Charger l'ID de l'appareil
+      const savedId = await AsyncStorage.getItem('device_id');
+      if (savedId) {
+        setDeviceId(savedId);
+      }
+
+      // Charger le statut d'enregistrement
+      const savedRegistration = await AsyncStorage.getItem('device_registered');
+      setIsRegistered(savedRegistration === 'true');
+
+      // Charger le paramètre de mode anti-veille
+      const keepAwake = await AsyncStorage.getItem('keep_awake_enabled');
+      setKeepAwakeEnabled(keepAwake !== 'false'); // Par défaut activé
+
+      // Charger le paramètre WebSocket
+      const wsEnabled = await AsyncStorage.getItem('websocket_enabled');
+      setWebSocketEnabled(wsEnabled !== 'false'); // Par défaut activé
+
+      // Charger l'URL du WebSocket
+      const wsUrl = await AsyncStorage.getItem('websocket_url');
+      if (wsUrl) {
+        setWebSocketUrl(wsUrl);
+      } else {
+        // Générer une URL WebSocket par défaut basée sur l'URL du serveur
+        if (savedUrl) {
+          const defaultWsUrl = savedUrl.replace(/^http/, 'ws').replace(/\/index\.php$/, '/websocket');
+          setWebSocketUrl(defaultWsUrl);
+        }
+      }
+
+      // Vérifier si le WebSocket est connecté
+      const wsService = getWebSocketService();
+      setWebSocketConnected(wsService?.isConnectedToServer() || false);
+
+      // Charger les informations de debug
+      const debugInfo = await apiService.getDebugInfo();
+      setDebugInfo(debugInfo);
+    } catch (error) {
+      console.error('Error loading settings:', error);
+      Alert.alert('Erreur', 'Impossible de charger les paramètres');
+    }
+  };
+
+  const saveServerUrl = async () => {
+    if (!serverUrl) {
+      Alert.alert('Erreur', 'Veuillez entrer une URL de serveur');
+      return;
+    }
+
+    setIsLoading(true);
+    setTestResult(null);
+    setTestMessage('');
+
+    try {
+      const success = await apiService.setServerUrl(serverUrl);
+      
+      if (success) {
+        await AsyncStorage.setItem('server_url', serverUrl);
+        setTestResult('success');
+        setTestMessage('Connexion au serveur réussie');
+        
+        // Mettre à jour les informations de debug
+        const debugInfo = await apiService.getDebugInfo();
+        setDebugInfo(debugInfo);
+        setIsRegistered(apiService.isDeviceRegistered());
+
+        // Générer une URL WebSocket par défaut basée sur l'URL du serveur
+        const defaultWsUrl = serverUrl.replace(/^http/, 'ws').replace(/\/index\.php$/, '/websocket');
+        setWebSocketUrl(defaultWsUrl);
+        await AsyncStorage.setItem('websocket_url', defaultWsUrl);
+      } else {
+        setTestResult('error');
+        setTestMessage('Impossible de se connecter au serveur');
+      }
+    } catch (error) {
+      console.error('Error saving server URL:', error);
+      setTestResult('error');
+      setTestMessage(error instanceof Error ? error.message : 'Erreur inconnue');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveDeviceName = async () => {
+    if (!deviceName) {
+      Alert.alert('Erreur', 'Veuillez entrer un nom d\'appareil');
       return;
     }
 
     try {
-      const handler = new TVEventHandler();
-      handler.enable(null, (cmp: any, evt: any) => {
-        if (!evt) return;
-
-        console.log('Settings Fire TV Event:', evt.eventType);
-
-        switch (evt.eventType) {
-          case 'down':
-            handleNavigateDown();
-            break;
-          case 'up':
-            handleNavigateUp();
-            break;
-          case 'select':
-            handleSelectAction();
-            break;
-          case 'back':
-            // Laisser le comportement par défaut
-            break;
-        }
-      });
-      setTvEventHandler(handler);
+      await AsyncStorage.setItem('device_name', deviceName);
+      await statusService.setDeviceName(deviceName);
+      Alert.alert('Succès', 'Nom d\'appareil enregistré');
     } catch (error) {
-      console.log('TVEventHandler not available in settings:', error);
+      console.error('Error saving device name:', error);
+      Alert.alert('Erreur', 'Impossible d\'enregistrer le nom d\'appareil');
     }
   };
 
-  const handleNavigateDown = () => {
-    const maxIndex = 12; // Ajusté pour inclure les nouveaux paramètres
-    if (focusedIndex < maxIndex) {
-      setFocusedIndex(focusedIndex + 1);
-    }
-  };
-
-  const handleNavigateUp = () => {
-    if (focusedIndex > 0) {
-      setFocusedIndex(focusedIndex - 1);
-    }
-  };
-
-  const handleSelectAction = () => {
-    switch (focusedIndex) {
-      case 0:
-        // Input field - ne rien faire, laisser le clavier apparaître
-        break;
-      case 1:
-        testConnection(serverUrl);
-        break;
-      case 2:
-        if (hasChanges && !saving) {
-          saveSettings();
+  const resetDevice = async () => {
+    Alert.alert(
+      'Réinitialiser l\'appareil',
+      'Êtes-vous sûr de vouloir réinitialiser cet appareil ? Toutes les données seront effacées.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { 
+          text: 'Réinitialiser', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiService.resetDevice();
+              await AsyncStorage.removeItem('device_registered');
+              await AsyncStorage.removeItem('enrollment_token');
+              await AsyncStorage.removeItem('assigned_presentation');
+              await AsyncStorage.removeItem('default_presentation');
+              
+              setIsRegistered(false);
+              setTestResult(null);
+              setTestMessage('');
+              
+              Alert.alert('Succès', 'Appareil réinitialisé avec succès');
+            } catch (error) {
+              console.error('Error resetting device:', error);
+              Alert.alert('Erreur', 'Impossible de réinitialiser l\'appareil');
+            }
+          }
         }
-        break;
-      case 3:
-        registerDevice();
-        break;
-      case 4:
-        loadDebugInfo();
-        break;
-      case 5:
-        resetDevice();
-        break;
-      case 6:
-        resetSettings();
-        break;
-      case 7:
-        setShowAdvancedSettings(!showAdvancedSettings);
-        break;
-      case 8:
-        setRemoteControlEnabled(!remoteControlEnabled);
-        break;
-      case 9:
-        setStatusReportingEnabled(!statusReportingEnabled);
-        break;
-      case 10:
-        setMemoryOptimizationEnabled(!memoryOptimizationEnabled);
-        break;
-      case 11:
-        toggleKeepAwake();
-        break;
-      case 12:
-        toggleWebSocket();
-        break;
-    }
+      ]
+    );
   };
 
-  const loadCurrentSettings = () => {
-    const currentUrl = apiService.getServerUrl();
-    setServerUrl(currentUrl);
-    setOriginalUrl(currentUrl);
+  const toggleKeepAwake = async (value: boolean) => {
+    setKeepAwakeEnabled(value);
+    await AsyncStorage.setItem('keep_awake_enabled', value.toString());
   };
 
-  const loadDebugInfo = async () => {
-    try {
-      const info = await apiService.getDebugInfo();
-      setDebugInfo(info);
-      
-      // Récupérer la dernière erreur de connexion
-      setConnectionError(info.lastConnectionError || '');
-      
-      // Récupérer le statut actuel
-      const status = statusService.getCurrentStatusSync();
-      if (status) {
-        setDeviceStatus(status.status);
-      }
-      
-      // Vérifier le statut WebSocket
-      const wsService = getWebSocketService();
-      if (wsService) {
-        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
-      }
-    } catch (error) {
-      console.error('Error loading debug info:', error);
-    }
-  };
-
-  const loadAdvancedSettings = async () => {
-    try {
-      // Charger les paramètres avancés depuis AsyncStorage
-      const remoteControl = await AsyncStorage.getItem('settings_remote_control');
-      const statusReporting = await AsyncStorage.getItem('settings_status_reporting');
-      const autoRestart = await AsyncStorage.getItem('settings_auto_restart');
-      const memoryOptimization = await AsyncStorage.getItem('settings_memory_optimization');
-      const keepAwake = await AsyncStorage.getItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED);
-      const webSocket = await AsyncStorage.getItem(STORAGE_KEYS.WEBSOCKET_ENABLED);
-      
-      setRemoteControlEnabled(remoteControl !== 'false');
-      setStatusReportingEnabled(statusReporting !== 'false');
-      setAutoRestartEnabled(autoRestart !== 'false');
-      setMemoryOptimizationEnabled(memoryOptimization !== 'false');
-      setKeepAwakeEnabled(keepAwake !== 'false');
-      setWebSocketEnabled(webSocket !== 'false');
-    } catch (error) {
-      console.error('Error loading advanced settings:', error);
-    }
-  };
-
-  const saveAdvancedSettings = async () => {
-    try {
-      await AsyncStorage.setItem('settings_remote_control', remoteControlEnabled.toString());
-      await AsyncStorage.setItem('settings_status_reporting', statusReportingEnabled.toString());
-      await AsyncStorage.setItem('settings_auto_restart', autoRestartEnabled.toString());
-      await AsyncStorage.setItem('settings_memory_optimization', memoryOptimizationEnabled.toString());
-      await AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, keepAwakeEnabled.toString());
-      await AsyncStorage.setItem(STORAGE_KEYS.WEBSOCKET_ENABLED, webSocketEnabled.toString());
-      
-      // Appliquer le paramètre de veille immédiatement
-      if (Platform.OS !== 'web') {
-        if (keepAwakeEnabled) {
-          activateKeepAwake();
-        } else {
-          deactivateKeepAwake();
-        }
-      }
-      
-      // Appliquer le paramètre WebSocket immédiatement
-      if (webSocketEnabled) {
-        try {
-          await initWebSocketService();
-          setWebSocketStatus('connected');
-        } catch (error) {
-          console.error('Error initializing WebSocket service:', error);
-          setWebSocketStatus('disconnected');
-        }
-      } else {
-        const wsService = getWebSocketService();
-        if (wsService) {
-          wsService.disconnect();
-          setWebSocketStatus('disconnected');
-        }
-      }
-      
-      Alert.alert(
-        'Paramètres avancés sauvegardés',
-        'Les paramètres avancés ont été sauvegardés avec succès.',
-        [{ text: 'OK' }]
-      );
-    } catch (error) {
-      console.error('Error saving advanced settings:', error);
-      Alert.alert(
-        'Erreur',
-        'Impossible de sauvegarder les paramètres avancés.',
-        [{ text: 'OK' }]
-      );
-    }
-  };
-
-  // Fonction pour activer/désactiver le mode anti-veille
-  const toggleKeepAwake = () => {
-    const newValue = !keepAwakeEnabled;
-    setKeepAwakeEnabled(newValue);
+  const toggleWebSocket = async (value: boolean) => {
+    setWebSocketEnabled(value);
+    await AsyncStorage.setItem('websocket_enabled', value.toString());
     
-    if (Platform.OS !== 'web') {
-      if (newValue) {
-        activateKeepAwake();
-        console.log('Keep awake mode activated');
-      } else {
-        deactivateKeepAwake();
-        console.log('Keep awake mode deactivated');
-      }
-    }
-    
-    // Sauvegarder le paramètre
-    AsyncStorage.setItem(STORAGE_KEYS.KEEP_AWAKE_ENABLED, newValue.toString());
-  };
-  
-  // Fonction pour activer/désactiver le WebSocket
-  const toggleWebSocket = async () => {
-    const newValue = !webSocketEnabled;
-    setWebSocketEnabled(newValue);
-    
-    if (newValue) {
+    if (value) {
+      // Tenter de se connecter au WebSocket
       try {
-        setWebSocketStatus('connecting');
         await initWebSocketService();
-        setWebSocketStatus('connected');
+        setWebSocketConnected(true);
+        Alert.alert('Succès', 'Connexion WebSocket établie');
       } catch (error) {
-        console.error('Error initializing WebSocket service:', error);
-        setWebSocketStatus('disconnected');
+        console.error('Error connecting to WebSocket:', error);
+        setWebSocketConnected(false);
+        Alert.alert('Erreur', 'Impossible de se connecter au WebSocket');
       }
     } else {
+      // Déconnecter le WebSocket
       const wsService = getWebSocketService();
       if (wsService) {
         wsService.disconnect();
-        setWebSocketStatus('disconnected');
+        setWebSocketConnected(false);
       }
     }
-    
-    // Sauvegarder le paramètre
-    AsyncStorage.setItem(STORAGE_KEYS.WEBSOCKET_ENABLED, newValue.toString());
   };
 
-  const testConnection = async (url: string) => {
-    if (!url.trim()) {
-      Alert.alert('Erreur', 'Veuillez entrer une URL de serveur valide.');
+  const saveWebSocketUrl = async () => {
+    if (!webSocketUrl) {
+      Alert.alert('Erreur', 'Veuillez entrer une URL de WebSocket');
       return;
     }
 
-    setConnectionStatus('testing');
     try {
-      const testUrl = url.replace(/\/+$/, '');
-      const finalUrl = testUrl.endsWith('index.php') ? testUrl : `${testUrl}/index.php`;
+      await AsyncStorage.setItem('websocket_url', webSocketUrl);
       
-      console.log('Testing connection to:', finalUrl);
-      
-      // Créer une instance temporaire pour tester
-      const tempApiService = { ...apiService };
-      
-      // Définir l'URL temporairement pour le test
-      await AsyncStorage.setItem(STORAGE_KEYS.SERVER_URL, finalUrl);
-      
-      // Tester directement avec fetch pour éviter les problèmes de configuration
-      const response = await fetch(`${finalUrl}/version`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'User-Agent': 'PresentationKiosk/2.0 (FireTV; OVH-Compatible)',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Accept-Encoding': 'gzip, deflate',
-          'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-        },
-      });
-      
-      console.log('Test response status:', response.status);
-      
-      if (response.ok) {
-        const responseText = await response.text();
-        console.log('Test response text:', responseText);
-        
+      // Tenter de se connecter au WebSocket
+      if (webSocketEnabled) {
         try {
-          const data = JSON.parse(responseText);
-          console.log('Test response data:', data);
-          
-          if (data.api_status === 'running' || data.status === 'running' || data.version) {
-            setConnectionStatus('success');
-            
-            Alert.alert(
-              'Test de connexion réussi',
-              `Connexion au serveur établie avec succès !\n\nVersion API: ${data.version || 'N/A'}\nStatut: ${data.api_status || data.status || 'running'}\nFuseau horaire: ${data.timezone || 'N/A'}`,
-              [{ text: 'OK' }]
-            );
-            return true;
-          }
-        } catch (parseError) {
-          console.error('Error parsing JSON response:', parseError);
-          console.error('Response text:', responseText);
+          await initWebSocketService();
+          setWebSocketConnected(true);
+          Alert.alert('Succès', 'Connexion WebSocket établie');
+        } catch (error) {
+          console.error('Error connecting to WebSocket:', error);
+          setWebSocketConnected(false);
+          Alert.alert('Erreur', 'Impossible de se connecter au WebSocket');
         }
       }
-      
-      setConnectionStatus('error');
-      Alert.alert(
-        'Test de connexion échoué',
-        `Impossible de se connecter au serveur.\n\nStatut HTTP: ${response.status}\n\nVérifiez l'URL et que le serveur est accessible.`,
-        [{ text: 'OK' }]
-      );
-      return false;
     } catch (error) {
-      console.error('Connection test failed:', error);
-      setConnectionStatus('error');
-      
-      Alert.alert(
-        'Erreur de connexion',
-        `Impossible de joindre le serveur:\n\n${error instanceof Error ? error.message : 'Erreur réseau'}\n\nVérifiez votre connexion réseau et l'URL du serveur.`,
-        [{ text: 'OK' }]
-      );
-      return false;
+      console.error('Error saving WebSocket URL:', error);
+      Alert.alert('Erreur', 'Impossible d\'enregistrer l\'URL du WebSocket');
     }
   };
 
-  const saveSettings = async () => {
-    if (!serverUrl.trim()) {
-      Alert.alert('Erreur', 'Veuillez entrer une URL de serveur valide.');
+  const testWebSocketConnection = async () => {
+    if (!webSocketUrl) {
+      Alert.alert('Erreur', 'Veuillez entrer une URL de WebSocket');
       return;
     }
 
-    setSaving(true);
-    
     try {
-      console.log('=== SAVING SETTINGS ===');
-      console.log('Server URL:', serverUrl.trim());
+      setIsLoading(true);
       
-      const success = await apiService.setServerUrl(serverUrl.trim());
+      // Sauvegarder l'URL d'abord
+      await AsyncStorage.setItem('websocket_url', webSocketUrl);
       
-      if (success) {
-        setOriginalUrl(serverUrl.trim());
-        setConnectionStatus('success');
-        await loadDebugInfo();
-        
-        // Initialiser le service WebSocket si activé
-        if (webSocketEnabled) {
-          try {
-            setWebSocketStatus('connecting');
-            await initWebSocketService();
-            setWebSocketStatus('connected');
-          } catch (error) {
-            console.error('Error initializing WebSocket service:', error);
-            setWebSocketStatus('disconnected');
-          }
-        }
-        
-        Alert.alert(
-          'Configuration sauvegardée',
-          'La configuration a été sauvegardée avec succès et l\'appareil a été enregistré sur le serveur.',
-          [{ text: 'Parfait !' }]
-        );
-      } else {
-        setConnectionStatus('error');
-        Alert.alert(
-          'Erreur de sauvegarde',
-          'Impossible de sauvegarder la configuration. Vérifiez l\'URL et la disponibilité du serveur.',
-          [{ text: 'OK' }]
-        );
-      }
+      // Tenter de se connecter au WebSocket
+      await initWebSocketService();
+      setWebSocketConnected(true);
+      Alert.alert('Succès', 'Connexion WebSocket établie');
     } catch (error) {
-      console.error('Error saving settings:', error);
-      setConnectionStatus('error');
-      Alert.alert(
-        'Erreur de sauvegarde',
-        `Une erreur est survenue lors de la sauvegarde:\n\n${error instanceof Error ? error.message : 'Erreur inconnue'}\n\nVeuillez réessayer.`,
-        [{ text: 'OK' }]
-      );
+      console.error('Error testing WebSocket connection:', error);
+      setWebSocketConnected(false);
+      Alert.alert('Erreur', 'Impossible de se connecter au WebSocket');
     } finally {
-      setSaving(false);
+      setIsLoading(false);
     }
-  };
-
-  const registerDevice = async () => {
-    if (!serverUrl.trim()) {
-      Alert.alert(
-        'Configuration requise',
-        'Veuillez d\'abord configurer et sauvegarder l\'URL du serveur.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    setRegistering(true);
-    
-    try {
-      console.log('=== MANUAL DEVICE REGISTRATION ===');
-      
-      // Vérifier d'abord si l'appareil est déjà enregistré
-      if (apiService.isDeviceRegistered()) {
-        Alert.alert(
-          'Appareil déjà enregistré',
-          `Cet appareil est déjà enregistré sur le serveur.\n\nID: ${apiService.getDeviceId()}\n\nVoulez-vous forcer un nouvel enregistrement ?`,
-          [
-            { text: 'Annuler', style: 'cancel' },
-            { 
-              text: 'Forcer', 
-              style: 'destructive',
-              onPress: async () => {
-                await apiService.resetDevice();
-                await performRegistration();
-              }
-            }
-          ]
-        );
-        return;
-      }
-
-      await performRegistration();
-      
-    } catch (error) {
-      console.error('Manual registration failed:', error);
-      Alert.alert(
-        'Erreur d\'enregistrement',
-        `Impossible d'enregistrer l'appareil:\n\n${error instanceof Error ? error.message : 'Erreur inconnue'}\n\nVérifiez votre connexion et l'URL du serveur.`,
-        [{ text: 'OK' }]
-      );
-    } finally {
-      setRegistering(false);
-    }
-  };
-
-  const performRegistration = async () => {
-    try {
-      console.log('=== PERFORMING DEVICE REGISTRATION ===');
-      
-      // Tester la connexion d'abord
-      const connectionOk = await apiService.testConnection();
-      if (!connectionOk) {
-        throw new Error('Impossible de se connecter au serveur');
-      }
-
-      console.log('Connection OK, proceeding with registration...');
-
-      // Enregistrer l'appareil
-      const registrationOk = await apiService.registerDevice();
-      if (registrationOk) {
-        await loadDebugInfo();
-        
-        // Initialiser le service WebSocket si activé
-        if (webSocketEnabled) {
-          try {
-            setWebSocketStatus('connecting');
-            await initWebSocketService();
-            setWebSocketStatus('connected');
-          } catch (error) {
-            console.error('Error initializing WebSocket service:', error);
-            setWebSocketStatus('disconnected');
-          }
-        }
-        
-        Alert.alert(
-          'Enregistrement réussi !',
-          `L'appareil a été enregistré avec succès sur le serveur.\n\nID: ${apiService.getDeviceId()}\n\nVous pouvez maintenant utiliser toutes les fonctionnalités de l'application.`,
-          [{ text: 'Parfait !' }]
-        );
-      } else {
-        throw new Error('L\'enregistrement a échoué sans message d\'erreur');
-      }
-    } catch (error) {
-      console.error('Registration failed:', error);
-      throw error;
-    }
-  };
-
-  const resetSettings = () => {
-    Alert.alert(
-      'Réinitialiser les paramètres',
-      'Êtes-vous sûr de vouloir effacer la configuration du serveur ?',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Réinitialiser',
-          style: 'destructive',
-          onPress: async () => {
-            setServerUrl('');
-            setConnectionStatus('idle');
-            await apiService.resetDevice();
-            await loadDebugInfo();
-            
-            // Déconnecter le WebSocket
-            const wsService = getWebSocketService();
-            if (wsService) {
-              wsService.disconnect();
-              setWebSocketStatus('disconnected');
-            }
-            
-            Alert.alert(
-              'Paramètres réinitialisés',
-              'La configuration a été effacée. Vous devez reconfigurer l\'URL du serveur.',
-              [{ text: 'OK' }]
-            );
-          },
-        },
-      ]
-    );
-  };
-
-  const resetDevice = () => {
-    Alert.alert(
-      'Réinitialiser l\'appareil',
-      'Cela va supprimer l\'enregistrement de l\'appareil sur le serveur. Vous devrez le reconfigurer.',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Réinitialiser',
-          style: 'destructive',
-          onPress: async () => {
-            await apiService.resetDevice();
-            await loadDebugInfo();
-            
-            // Déconnecter le WebSocket
-            const wsService = getWebSocketService();
-            if (wsService) {
-              wsService.disconnect();
-              setWebSocketStatus('disconnected');
-            }
-            
-            Alert.alert(
-              'Appareil réinitialisé',
-              'L\'enregistrement de l\'appareil a été supprimé. Utilisez le bouton d\'enregistrement pour le réenregistrer.',
-              [{ text: 'OK' }]
-            );
-          },
-        },
-      ]
-    );
-  };
-
-  const renderConnectionStatus = () => {
-    const statusConfig = {
-      idle: { color: '#6b7280', text: 'Non testé', icon: Server },
-      testing: { color: '#f59e0b', text: 'Test en cours...', icon: Wifi },
-      success: { color: '#10b981', text: 'Connexion réussie', icon: Check },
-      error: { color: '#ef4444', text: 'Connexion échouée', icon: AlertCircle },
-    };
-
-    const config = statusConfig[connectionStatus];
-    const IconComponent = config.icon;
-
-    return (
-      <View style={[styles.statusContainer, { borderColor: config.color }]}>
-        <IconComponent size={20} color={config.color} />
-        <Text style={[styles.statusText, { color: config.color }]}>
-          {config.text}
-        </Text>
-      </View>
-    );
-  };
-
-  const renderDeviceStatus = () => {
-    const statusConfig: {[key: string]: {color: string, text: string, icon: any}} = {
-      online: { color: '#10b981', text: 'En ligne', icon: Activity },
-      offline: { color: '#6b7280', text: 'Hors ligne', icon: WifiOff },
-      playing: { color: '#3b82f6', text: 'En diffusion', icon: Play },
-      paused: { color: '#f59e0b', text: 'En pause', icon: Pause },
-      error: { color: '#ef4444', text: 'Erreur', icon: AlertCircle },
-    };
-
-    const config = statusConfig[deviceStatus] || statusConfig.offline;
-    const IconComponent = config.icon;
-
-    return (
-      <View style={[styles.deviceStatusContainer, { borderColor: config.color }]}>
-        <IconComponent size={20} color={config.color} />
-        <Text style={[styles.statusText, { color: config.color }]}>
-          {config.text}
-        </Text>
-      </View>
-    );
-  };
-  
-  const renderWebSocketStatus = () => {
-    const statusConfig: {[key: string]: {color: string, text: string, icon: any}} = {
-      disconnected: { color: '#6b7280', text: 'Déconnecté', icon: WifiOff },
-      connecting: { color: '#f59e0b', text: 'Connexion...', icon: Wifi },
-      connected: { color: '#10b981', text: 'Connecté', icon: Radio },
-    };
-
-    const config = statusConfig[webSocketStatus];
-    const IconComponent = config.icon;
-
-    return (
-      <View style={[styles.webSocketStatusContainer, { borderColor: config.color }]}>
-        <IconComponent size={20} color={config.color} />
-        <Text style={[styles.statusText, { color: config.color }]}>
-          {config.text}
-        </Text>
-      </View>
-    );
   };
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <LinearGradient
-            colors={['#4f46e5', '#7c3aed']}
-            style={styles.headerGradient}
-          >
-            <SettingsIcon size={32} color="#ffffff" />
-          </LinearGradient>
-          <Text style={styles.title}>Paramètres Enhanced</Text>
-          <Text style={styles.subtitle}>Configuration du serveur et contrôle à distance</Text>
-        </View>
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Paramètres</Text>
+        <Text style={styles.subtitle}>Configuration de l'application</Text>
+      </View>
 
-        <View style={styles.section}>
+      {/* Configuration du serveur */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Server size={20} color="#3b82f6" />
           <Text style={styles.sectionTitle}>Configuration du serveur</Text>
-          <Text style={styles.sectionDescription}>
-            Entrez l'URL complète de votre serveur de présentations
-          </Text>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>URL du serveur</Text>
-            <TextInput
-              style={[
-                styles.textInput,
-                focusedIndex === 0 && styles.focusedInput
-              ]}
-              value={serverUrl}
-              onChangeText={setServerUrl}
-              placeholder="http://votre-domaine.fr/mods/livetv/api"
-              placeholderTextColor="#6b7280"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              accessible={true}
-              accessibilityLabel="URL du serveur"
-              accessibilityHint="Entrez l'adresse de votre serveur de présentations"
-              onFocus={() => setFocusedIndex(0)}
-            />
-            <Text style={styles.inputHint}>
-              L'application ajoutera automatiquement /index.php si nécessaire
-            </Text>
-          </View>
-
-          {renderConnectionStatus()}
-          
-          {/* Afficher l'erreur de connexion si présente */}
-          {connectionError && (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorTitle}>Dernière erreur de connexion:</Text>
-              <Text style={styles.errorMessage}>{connectionError}</Text>
-            </View>
-          )}
-
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={[
-                styles.button, 
-                styles.testButton,
-                (!serverUrl.trim() || connectionStatus === 'testing') && styles.buttonDisabled,
-                focusedIndex === 1 && styles.focusedButton
-              ]}
-              onPress={() => testConnection(serverUrl)}
-              disabled={!serverUrl.trim() || connectionStatus === 'testing'}
-              accessible={true}
-              accessibilityLabel="Tester la connexion"
-              accessibilityRole="button"
-              onFocus={() => setFocusedIndex(1)}
-            >
-              {connectionStatus === 'testing' ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Wifi size={16} color="#ffffff" />
-              )}
-              <Text style={styles.buttonText}>Tester la connexion</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.button,
-                styles.saveButton,
-                (!hasChanges || saving) && styles.buttonDisabled,
-                focusedIndex === 2 && styles.focusedButton
-              ]}
-              onPress={saveSettings}
-              disabled={!hasChanges || saving}
-              accessible={true}
-              accessibilityLabel="Sauvegarder la configuration"
-              accessibilityRole="button"
-              onFocus={() => setFocusedIndex(2)}
-            >
-              {saving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Check size={16} color="#ffffff" />
-              )}
-              <Text style={styles.buttonText}>Sauvegarder</Text>
-            </TouchableOpacity>
-          </View>
         </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Enregistrement de l'appareil</Text>
-          <Text style={styles.sectionDescription}>
-            Enregistrez manuellement cet appareil sur le serveur si l'enregistrement automatique a échoué
-          </Text>
-          
-          <TouchableOpacity
-            style={[
-              styles.button, 
-              styles.registerButton,
-              registering && styles.buttonDisabled,
-              focusedIndex === 3 && styles.focusedButton
-            ]}
-            onPress={registerDevice}
-            disabled={registering}
-            accessible={true}
-            accessibilityLabel="Enregistrer l'appareil"
-            accessibilityRole="button"
-            onFocus={() => setFocusedIndex(3)}
-          >
-            {registering ? (
-              <ActivityIndicator size="small" color="#ffffff" />
+        
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>URL du serveur</Text>
+          <TextInput
+            style={styles.input}
+            value={serverUrl}
+            onChangeText={setServerUrl}
+            placeholder="http://exemple.com/api/index.php"
+            placeholderTextColor="#9ca3af"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        
+        <TouchableOpacity 
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={saveServerUrl}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <Text style={styles.buttonText}>Tester et enregistrer</Text>
+          )}
+        </TouchableOpacity>
+        
+        {testResult && (
+          <View style={[
+            styles.resultContainer, 
+            testResult === 'success' ? styles.successContainer : styles.errorContainer
+          ]}>
+            {testResult === 'success' ? (
+              <Check size={16} color="#10b981" />
             ) : (
-              <UserPlus size={16} color="#ffffff" />
+              <X size={16} color="#ef4444" />
             )}
-            <Text style={styles.buttonText}>
-              {registering ? 'Enregistrement...' : 'Enregistrer l\'appareil'}
+            <Text style={[
+              styles.resultText,
+              testResult === 'success' ? styles.successText : styles.errorText
+            ]}>
+              {testMessage}
             </Text>
-          </TouchableOpacity>
-          
-          <Text style={styles.registerHint}>
-            Utilisez ce bouton si l'enregistrement automatique a échoué ou si vous voulez forcer un nouvel enregistrement.
-          </Text>
-        </View>
+          </View>
+        )}
+      </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Statut de l'appareil</Text>
-          
-          <View style={styles.statusRow}>
-            {renderDeviceStatus()}
+      {/* Configuration WebSocket */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Radio size={20} color="#8b5cf6" />
+          <Text style={styles.sectionTitle}>Configuration WebSocket</Text>
+        </View>
+        
+        <View style={styles.switchContainer}>
+          <Text style={styles.switchLabel}>Activer WebSocket</Text>
+          <Switch
+            value={webSocketEnabled}
+            onValueChange={toggleWebSocket}
+            trackColor={{ false: '#d1d5db', true: '#93c5fd' }}
+            thumbColor={webSocketEnabled ? '#3b82f6' : '#f4f4f5'}
+          />
+        </View>
+        
+        {webSocketEnabled && (
+          <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>URL du serveur WebSocket</Text>
+              <TextInput
+                style={styles.input}
+                value={webSocketUrl}
+                onChangeText={setWebSocketUrl}
+                placeholder="ws://exemple.com:8080"
+                placeholderTextColor="#9ca3af"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
             
-            <TouchableOpacity
-              style={[
-                styles.refreshStatusButton,
-                focusedIndex === 4 && styles.focusedButton
-              ]}
-              onPress={loadDebugInfo}
-              accessible={true}
-              accessibilityLabel="Actualiser le statut"
-              accessibilityRole="button"
-              onFocus={() => setFocusedIndex(4)}
+            <TouchableOpacity 
+              style={[styles.button, isLoading && styles.buttonDisabled]}
+              onPress={testWebSocketConnection}
+              disabled={isLoading}
             >
-              <RefreshCw size={16} color="#ffffff" />
-              <Text style={styles.refreshStatusText}>Actualiser</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={styles.buttonText}>Tester la connexion WebSocket</Text>
+              )}
             </TouchableOpacity>
-          </View>
-          
-          <View style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Monitor size={20} color="#9ca3af" />
-              <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Type d'appareil</Text>
-                <Text style={styles.infoValue}>Amazon Fire TV Stick Enhanced</Text>
-              </View>
-            </View>
             
-            {debugInfo && (
-              <>
-                <View style={styles.infoRow}>
-                  <Server size={20} color="#9ca3af" />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>ID de l'appareil</Text>
-                    <Text style={styles.infoValue}>{debugInfo.deviceId}</Text>
-                  </View>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Check size={20} color={debugInfo.isRegistered ? "#10b981" : "#ef4444"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Statut d'enregistrement</Text>
-                    <Text style={[styles.infoValue, { color: debugInfo.isRegistered ? "#10b981" : "#ef4444" }]}>
-                      {debugInfo.isRegistered ? 'Enregistré' : 'Non enregistré'}
-                    </Text>
-                  </View>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <AlertCircle size={20} color={debugInfo.hasToken ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Token d'enrollment</Text>
-                    <Text style={styles.infoValue}>
-                      {debugInfo.hasToken ? 'Présent' : 'Absent'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <Monitor size={20} color={debugInfo.assignmentCheckEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Surveillance assignations</Text>
-                    <Text style={styles.infoValue}>
-                      {debugInfo.assignmentCheckEnabled ? 'Active' : 'Inactive'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <Monitor size={20} color={debugInfo.defaultCheckEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Surveillance par défaut</Text>
-                    <Text style={styles.infoValue}>
-                      {debugInfo.defaultCheckEnabled ? 'Active' : 'Inactive'}
-                    </Text>
-                  </View>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Zap size={20} color={remoteControlEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Contrôle à distance</Text>
-                    <Text style={styles.infoValue}>
-                      {remoteControlEnabled ? 'Activé' : 'Désactivé'}
-                    </Text>
-                  </View>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Moon size={20} color={keepAwakeEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Mode anti-veille</Text>
-                    <Text style={styles.infoValue}>
-                      {keepAwakeEnabled ? 'Activé' : 'Désactivé'}
-                    </Text>
-                  </View>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Radio size={20} color={webSocketEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>WebSocket</Text>
-                    <Text style={styles.infoValue}>
-                      {webSocketEnabled ? (webSocketStatus === 'connected' ? 'Connecté' : 'Activé') : 'Désactivé'}
-                    </Text>
-                  </View>
-                </View>
-                
-                {debugInfo.connectionAttempts > 0 && (
-                  <View style={styles.infoRow}>
-                    <AlertCircle size={20} color={debugInfo.connectionAttempts > 3 ? "#ef4444" : "#f59e0b"} />
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Tentatives de connexion</Text>
-                      <Text style={styles.infoValue}>
-                        {debugInfo.connectionAttempts}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-              </>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Actions</Text>
-          
-          <TouchableOpacity
-            style={[
-              styles.button, 
-              styles.actionButton,
-              focusedIndex === 5 && styles.focusedButton
-            ]}
-            onPress={resetDevice}
-            accessible={true}
-            accessibilityLabel="Réinitialiser l'appareil"
-            accessibilityRole="button"
-            onFocus={() => setFocusedIndex(5)}
-          >
-            <Trash2 size={16} color="#f59e0b" />
-            <Text style={[styles.buttonText, { color: '#f59e0b' }]}>
-              Réinitialiser l'appareil
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[
-              styles.button, 
-              styles.resetButton,
-              focusedIndex === 6 && styles.focusedButton
-            ]}
-            onPress={resetSettings}
-            accessible={true}
-            accessibilityLabel="Réinitialiser les paramètres"
-            accessibilityRole="button"
-            onFocus={() => setFocusedIndex(6)}
-          >
-            <AlertCircle size={16} color="#ef4444" />
-            <Text style={[styles.buttonText, { color: '#ef4444' }]}>
-              Réinitialiser les paramètres
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={[
-              styles.advancedSettingsHeader,
-              focusedIndex === 7 && styles.focusedButton
-            ]}
-            onPress={() => setShowAdvancedSettings(!showAdvancedSettings)}
-            accessible={true}
-            accessibilityLabel="Paramètres avancés"
-            accessibilityRole="button"
-            onFocus={() => setFocusedIndex(7)}
-          >
-            <Text style={styles.sectionTitle}>Paramètres avancés</Text>
-            <Text style={styles.chevron}>{showAdvancedSettings ? '▼' : '▶'}</Text>
-          </TouchableOpacity>
-          
-          {showAdvancedSettings && (
-            <View style={styles.advancedSettingsContainer}>
-              <View style={styles.settingRow}>
-                <View style={styles.settingLabelContainer}>
-                  <Zap size={20} color={remoteControlEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.settingTextContainer}>
-                    <Text style={styles.settingLabel}>Contrôle à distance</Text>
-                    <Text style={styles.settingDescription}>
-                      Permet de contrôler l'appareil depuis la plateforme web
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={remoteControlEnabled}
-                  onValueChange={setRemoteControlEnabled}
-                  trackColor={{ false: '#6b7280', true: '#10b981' }}
-                  thumbColor={remoteControlEnabled ? '#ffffff' : '#f4f3f4'}
-                  ios_backgroundColor="#6b7280"
-                  style={[
-                    styles.settingSwitch,
-                    focusedIndex === 8 && styles.focusedSwitch
-                  ]}
-                  onFocus={() => setFocusedIndex(8)}
-                />
-              </View>
-              
-              <View style={styles.settingRow}>
-                <View style={styles.settingLabelContainer}>
-                  <Activity size={20} color={statusReportingEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.settingTextContainer}>
-                    <Text style={styles.settingLabel}>Rapport de statut</Text>
-                    <Text style={styles.settingDescription}>
-                      Envoie périodiquement le statut de l'appareil au serveur
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={statusReportingEnabled}
-                  onValueChange={setStatusReportingEnabled}
-                  trackColor={{ false: '#6b7280', true: '#10b981' }}
-                  thumbColor={statusReportingEnabled ? '#ffffff' : '#f4f3f4'}
-                  ios_backgroundColor="#6b7280"
-                  style={[
-                    styles.settingSwitch,
-                    focusedIndex === 9 && styles.focusedSwitch
-                  ]}
-                  onFocus={() => setFocusedIndex(9)}
-                />
-              </View>
-              
-              <View style={styles.settingRow}>
-                <View style={styles.settingLabelContainer}>
-                  <RefreshCw size={20} color={memoryOptimizationEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.settingTextContainer}>
-                    <Text style={styles.settingLabel}>Optimisation mémoire</Text>
-                    <Text style={styles.settingDescription}>
-                      Optimise l'utilisation de la mémoire pour les longues présentations
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={memoryOptimizationEnabled}
-                  onValueChange={setMemoryOptimizationEnabled}
-                  trackColor={{ false: '#6b7280', true: '#10b981' }}
-                  thumbColor={memoryOptimizationEnabled ? '#ffffff' : '#f4f3f4'}
-                  ios_backgroundColor="#6b7280"
-                  style={[
-                    styles.settingSwitch,
-                    focusedIndex === 10 && styles.focusedSwitch
-                  ]}
-                  onFocus={() => setFocusedIndex(10)}
-                />
-              </View>
-              
-              <View style={styles.settingRow}>
-                <View style={styles.settingLabelContainer}>
-                  <Moon size={20} color={keepAwakeEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.settingTextContainer}>
-                    <Text style={styles.settingLabel}>Mode anti-veille</Text>
-                    <Text style={styles.settingDescription}>
-                      Empêche l'écran de s'éteindre automatiquement
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={keepAwakeEnabled}
-                  onValueChange={toggleKeepAwake}
-                  trackColor={{ false: '#6b7280', true: '#10b981' }}
-                  thumbColor={keepAwakeEnabled ? '#ffffff' : '#f4f3f4'}
-                  ios_backgroundColor="#6b7280"
-                  style={[
-                    styles.settingSwitch,
-                    focusedIndex === 11 && styles.focusedSwitch
-                  ]}
-                  onFocus={() => setFocusedIndex(11)}
-                />
-              </View>
-              
-              <View style={styles.settingRow}>
-                <View style={styles.settingLabelContainer}>
-                  <Radio size={20} color={webSocketEnabled ? "#10b981" : "#6b7280"} />
-                  <View style={styles.settingTextContainer}>
-                    <Text style={styles.settingLabel}>WebSocket</Text>
-                    <Text style={styles.settingDescription}>
-                      Permet le contrôle en temps réel et les notifications push
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={webSocketEnabled}
-                  onValueChange={toggleWebSocket}
-                  trackColor={{ false: '#6b7280', true: '#10b981' }}
-                  thumbColor={webSocketEnabled ? '#ffffff' : '#f4f3f4'}
-                  ios_backgroundColor="#6b7280"
-                  style={[
-                    styles.settingSwitch,
-                    focusedIndex === 12 && styles.focusedSwitch
-                  ]}
-                  onFocus={() => setFocusedIndex(12)}
-                />
-              </View>
-              
-              <TouchableOpacity
-                style={styles.saveAdvancedButton}
-                onPress={saveAdvancedSettings}
-              >
-                <Check size={16} color="#ffffff" />
-                <Text style={styles.saveAdvancedButtonText}>
-                  Sauvegarder les paramètres avancés
+            <View style={styles.statusContainer}>
+              <Text style={styles.statusLabel}>Statut WebSocket:</Text>
+              <View style={styles.statusIndicatorContainer}>
+                <View style={[
+                  styles.statusDot,
+                  webSocketConnected ? styles.statusDotConnected : styles.statusDotDisconnected
+                ]} />
+                <Text style={styles.statusText}>
+                  {webSocketConnected ? 'Connecté' : 'Déconnecté'}
                 </Text>
-              </TouchableOpacity>
+              </View>
             </View>
-          )}
-        </View>
+          </>
+        )}
+      </View>
 
-        <View style={styles.helpSection}>
-          <Text style={styles.helpTitle}>Guide de configuration OVH</Text>
-          <Text style={styles.helpText}>
-            <Text style={styles.helpBold}>1. URL du serveur OVH :</Text>{`\n`}
-            Entrez l'URL complète de votre API hébergée chez OVH{`\n`}
-            Exemple: http://votre-domaine.fr/mods/livetv/api{`\n\n`}
-            
-            <Text style={styles.helpBold}>2. Problèmes de connexion OVH :</Text>{`\n`}
-            • Vérifiez que votre serveur OVH autorise les requêtes HTTP{`\n`}
-            • Assurez-vous que le pare-feu OVH n'est pas trop restrictif{`\n`}
-            • Vérifiez que PHP est correctement configuré sur OVH{`\n\n`}
-            
-            <Text style={styles.helpBold}>3. Certificats SSL :</Text>{`\n`}
-            • Si vous utilisez HTTPS, assurez-vous que votre certificat est valide{`\n`}
-            • Pour les tests, utilisez HTTP plutôt que HTTPS{`\n`}
-            • L'application est configurée pour accepter les connexions non sécurisées{`\n\n`}
-            
-            <Text style={styles.helpBold}>4. Mode anti-veille :</Text>{`\n`}
-            • Activé par défaut pour empêcher l'écran de s\'éteindre{`\n`}
-            • Fonctionne même en arrière-plan{`\n`}
-            • Peut être désactivé dans les paramètres avancés{`\n\n`}
-            
-            <Text style={styles.helpBold}>5. WebSocket :</Text>{`\n`}
-            • Permet le contrôle en temps réel de l'appareil{`\n`}
-            • Nécessite un serveur WebSocket configuré{`\n`}
-            • Réduit la latence des commandes à distance{`\n\n`}
-            
-            <Text style={styles.helpBold}>6. En cas de problème avec OVH :</Text>{`\n`}
-            • Vérifiez les logs PHP sur votre hébergement OVH{`\n`}
-            • Testez l'URL dans un navigateur web{`\n`}
-            • Assurez-vous que les fichiers PHP ont les bonnes permissions{`\n`}
-            • Vérifiez la configuration .htaccess si vous en utilisez un
-          </Text>
+      {/* Configuration de l'appareil */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Monitor size={20} color="#10b981" />
+          <Text style={styles.sectionTitle}>Configuration de l'appareil</Text>
         </View>
-      </ScrollView>
-    </View>
+        
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>Nom de l'appareil</Text>
+          <TextInput
+            style={styles.input}
+            value={deviceName}
+            onChangeText={setDeviceName}
+            placeholder="Fire TV Salon"
+            placeholderTextColor="#9ca3af"
+          />
+        </View>
+        
+        <TouchableOpacity 
+          style={styles.button}
+          onPress={saveDeviceName}
+        >
+          <Text style={styles.buttonText}>Enregistrer le nom</Text>
+        </TouchableOpacity>
+        
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoLabel}>ID de l'appareil:</Text>
+          <Text style={styles.infoValue}>{deviceId}</Text>
+        </View>
+        
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoLabel}>Statut d'enregistrement:</Text>
+          <View style={styles.statusIndicatorContainer}>
+            <View style={[
+              styles.statusDot,
+              isRegistered ? styles.statusDotConnected : styles.statusDotDisconnected
+            ]} />
+            <Text style={styles.statusText}>
+              {isRegistered ? 'Enregistré' : 'Non enregistré'}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.switchContainer}>
+          <Text style={styles.switchLabel}>Mode anti-veille</Text>
+          <Switch
+            value={keepAwakeEnabled}
+            onValueChange={toggleKeepAwake}
+            trackColor={{ false: '#d1d5db', true: '#86efac' }}
+            thumbColor={keepAwakeEnabled ? '#10b981' : '#f4f4f5'}
+          />
+        </View>
+      </View>
+
+      {/* Actions avancées */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <RefreshCw size={20} color="#f59e0b" />
+          <Text style={styles.sectionTitle}>Actions avancées</Text>
+        </View>
+        
+        <TouchableOpacity 
+          style={styles.dangerButton}
+          onPress={resetDevice}
+        >
+          <Text style={styles.buttonText}>Réinitialiser l'appareil</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.infoButton}
+          onPress={() => setShowDebugInfo(!showDebugInfo)}
+        >
+          <Text style={styles.buttonText}>
+            {showDebugInfo ? 'Masquer les infos de debug' : 'Afficher les infos de debug'}
+          </Text>
+        </TouchableOpacity>
+        
+        {showDebugInfo && debugInfo && (
+          <View style={styles.debugContainer}>
+            <Text style={styles.debugTitle}>Informations de debug</Text>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>URL du serveur:</Text>
+              <Text style={styles.debugValue}>{debugInfo.serverUrl || 'Non configurée'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>ID de l'appareil:</Text>
+              <Text style={styles.debugValue}>{debugInfo.deviceId || 'Non généré'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Nom de l'appareil:</Text>
+              <Text style={styles.debugValue}>{debugInfo.deviceName || 'Non configuré'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Enregistré:</Text>
+              <Text style={styles.debugValue}>{debugInfo.isRegistered ? 'Oui' : 'Non'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Token:</Text>
+              <Text style={styles.debugValue}>{debugInfo.hasToken ? 'Présent' : 'Absent'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Type d'API:</Text>
+              <Text style={styles.debugValue}>{debugInfo.apiType || 'Non détecté'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>IP locale:</Text>
+              <Text style={styles.debugValue}>{debugInfo.localIpAddress || 'Inconnue'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>IP externe:</Text>
+              <Text style={styles.debugValue}>{debugInfo.externalIpAddress || 'Inconnue'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>WebSocket:</Text>
+              <Text style={styles.debugValue}>
+                {webSocketEnabled ? (webSocketConnected ? 'Connecté' : 'Déconnecté') : 'Désactivé'}
+              </Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>URL WebSocket:</Text>
+              <Text style={styles.debugValue}>{webSocketUrl || 'Non configurée'}</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Version:</Text>
+              <Text style={styles.debugValue}>2.0.0</Text>
+            </View>
+            
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Plateforme:</Text>
+              <Text style={styles.debugValue}>{Platform.OS} {Platform.Version}</Text>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Informations */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Info size={20} color="#6b7280" />
+          <Text style={styles.sectionTitle}>Informations</Text>
+        </View>
+        
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoLabel}>Version de l'application:</Text>
+          <Text style={styles.infoValue}>2.0.0</Text>
+        </View>
+        
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoLabel}>Plateforme:</Text>
+          <Text style={styles.infoValue}>{Platform.OS}</Text>
+        </View>
+        
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoLabel}>Version de la plateforme:</Text>
+          <Text style={styles.infoValue}>{Platform.Version}</Text>
+        </View>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -1208,326 +563,186 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0a',
   },
-  scrollContent: {
-    padding: 20,
-  },
   header: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  headerGradient: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
+    padding: 20,
+    paddingBottom: 10,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
     color: '#9ca3af',
-    textAlign: 'center',
   },
   section: {
-    marginBottom: 32,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 8,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#9ca3af',
-    marginBottom: 16,
-    lineHeight: 20,
+    marginLeft: 8,
   },
   inputContainer: {
     marginBottom: 16,
   },
-  inputLabel: {
+  label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#d1d5db',
     marginBottom: 8,
   },
-  textInput: {
-    backgroundColor: '#1a1a1a',
+  input: {
+    backgroundColor: '#2a2a2a',
     borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    padding: 12,
+    color: '#ffffff',
     fontSize: 16,
-    color: '#ffffff',
-    borderWidth: 2,
-    borderColor: '#374151',
-    marginBottom: 8,
-  },
-  focusedInput: {
-    borderColor: '#3b82f6',
-    borderWidth: 4,
-    backgroundColor: '#1e293b',
-    transform: [{ scale: 1.02 }],
-    elevation: 8,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  inputHint: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontStyle: 'italic',
-  },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-  },
-  deviceStatusContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-  },
-  webSocketStatusContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    marginLeft: 12,
-  },
-  refreshStatusButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  refreshStatusText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  statusText: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
   },
   button: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-    marginBottom: 8,
-  },
-  testButton: {
     backgroundColor: '#3b82f6',
-  },
-  saveButton: {
-    backgroundColor: '#10b981',
-  },
-  registerButton: {
-    backgroundColor: '#8b5cf6',
-    flex: 'none',
-    width: '100%',
-  },
-  actionButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#374151',
-  },
-  resetButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#ef4444',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 16,
   },
   buttonDisabled: {
-    opacity: 0.5,
-  },
-  focusedButton: {
-    borderWidth: 4,
-    borderColor: '#3b82f6',
-    transform: [{ scale: 1.05 }],
-    elevation: 12,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    backgroundColor: '#6b7280',
   },
   buttonText: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
   },
-  registerHint: {
-    fontSize: 12,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-    marginTop: 8,
-    lineHeight: 16,
-  },
-  infoCard: {
-    backgroundColor: '#1a1a1a',
+  dangerButton: {
+    backgroundColor: '#ef4444',
     borderRadius: 8,
-    padding: 16,
-  },
-  infoRow: {
-    flexDirection: 'row',
+    padding: 14,
     alignItems: 'center',
     marginBottom: 16,
   },
-  infoContent: {
-    marginLeft: 12,
-    flex: 1,
+  infoButton: {
+    backgroundColor: '#6b7280',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  resultContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  successContainer: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  errorContainer: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  resultText: {
+    marginLeft: 8,
+    fontSize: 14,
+  },
+  successText: {
+    color: '#10b981',
+  },
+  errorText: {
+    color: '#ef4444',
+  },
+  infoContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
   },
   infoLabel: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#9ca3af',
-    marginBottom: 2,
   },
   infoValue: {
     fontSize: 14,
+    color: '#ffffff',
     fontWeight: '600',
-    color: '#ffffff',
   },
-  advancedSettingsHeader: {
+  switchContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  chevron: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  advancedSettingsContainer: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  settingLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  settingTextContainer: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  settingLabel: {
+  switchLabel: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#ffffff',
-    marginBottom: 2,
-  },
-  settingDescription: {
-    fontSize: 12,
     color: '#9ca3af',
   },
-  settingSwitch: {
-    marginLeft: 8,
-  },
-  focusedSwitch: {
-    transform: [{ scale: 1.1 }],
-  },
-  saveAdvancedButton: {
-    backgroundColor: '#10b981',
+  debugContainer: {
+    backgroundColor: '#2a2a2a',
     borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    padding: 12,
     marginTop: 8,
   },
-  saveAdvancedButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  helpSection: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 16,
-    marginTop: 16,
-  },
-  helpTitle: {
+  debugTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
     marginBottom: 12,
   },
-  helpText: {
+  debugItem: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  debugLabel: {
+    fontSize: 12,
+    color: '#9ca3af',
+    width: 120,
+  },
+  debugValue: {
+    fontSize: 12,
+    color: '#ffffff',
+    flex: 1,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  statusLabel: {
     fontSize: 14,
     color: '#9ca3af',
-    lineHeight: 22,
+    marginRight: 8,
   },
-  helpBold: {
-    fontWeight: 'bold',
-    color: '#ffffff',
+  statusIndicatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  errorContainer: {
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#ef4444',
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
   },
-  errorTitle: {
+  statusDotConnected: {
+    backgroundColor: '#10b981',
+  },
+  statusDotDisconnected: {
+    backgroundColor: '#ef4444',
+  },
+  statusText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#ef4444',
-    marginBottom: 4,
-  },
-  errorMessage: {
-    fontSize: 12,
-    color: '#ef4444',
-    lineHeight: 18,
+    color: '#ffffff',
   },
 });
