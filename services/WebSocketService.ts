@@ -225,20 +225,18 @@ export class WebSocketService {
     }
     
     // Gérer les messages reçus
-    private handleMessage(data: WebSocketMessage): void {
+    private handleMessage(data: any): void {
         console.log('[WebSocket] Message reçu:', data);
         
         switch (data.type) {
-            case 'registration_success':
-                console.log('[WebSocket] Enregistrement réussi');
-                break;
-                
             case 'command':
+                // Commande reçue
                 console.log(`[WebSocket] Commande reçue: ${data.command}`);
                 this.handleCommand(data.command, data.parameters || {});
                 break;
                 
             case 'pong':
+                // Réponse à un ping
                 console.log('[WebSocket] Pong reçu');
                 break;
                 
