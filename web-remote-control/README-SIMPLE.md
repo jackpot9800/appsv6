@@ -39,7 +39,7 @@ php start-websocket-simple.php
 ## Test du serveur WebSocket
 
 1. Ouvrez le fichier `websocket-simple.html` dans votre navigateur
-2. Assurez-vous que l'URL du serveur est `ws://localhost:8080`
+2. Assurez-vous que l'URL du serveur est `ws://localhost:8080` pour les tests locaux
 3. Cliquez sur le bouton "Connecter"
 4. Si la connexion réussit, vous verrez "Connecté" en vert
 5. Vous pouvez maintenant envoyer des messages au serveur WebSocket
