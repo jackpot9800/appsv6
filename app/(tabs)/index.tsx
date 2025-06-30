@@ -42,7 +42,6 @@ export default function HomeScreen() {
   const [recentPresentations, setRecentPresentations] = useState<Presentation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [webSocketStatus, setWebSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -91,7 +90,7 @@ export default function HomeScreen() {
       apiService.stopAssignmentCheck();
       apiService.stopDefaultPresentationCheck();
     };
-  }, [retryCount]);
+  }, []);
   
   // Vérifier périodiquement le statut WebSocket
   useEffect(() => {
@@ -216,7 +215,24 @@ export default function HomeScreen() {
   const refreshData = async () => {
     setLoading(true);
     setError(null);
-    setRetryCount(prev => prev + 1);
+    
+    try {
+      await checkConnection();
+      await loadAssignedPresentation();
+      await loadDefaultPresentation();
+      await loadRecentPresentations();
+      
+      // Vérifier le statut WebSocket
+      const wsService = getWebSocketService();
+      if (wsService) {
+        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      setError(error instanceof Error ? error.message : 'Erreur lors de l\'actualisation');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -404,29 +420,42 @@ export default function HomeScreen() {
                   onPress={() => playPresentation(presentation)}
                   activeOpacity={0.8}
                 >
-                  <LinearGradient
-                    colors={['#4f46e5', '#7c3aed']}
-                    style={styles.presentationCardGradient}
-                  >
-                    <View style={styles.presentationCardContent}>
-                      <Text style={styles.presentationTitle} numberOfLines={2}>
+                  <View style={styles.presentationCardContent}>
+                    <View style={styles.presentationIconContainer}>
+                      <LinearGradient
+                        colors={['#4f46e5', '#7c3aed']}
+                        style={styles.presentationIcon}
+                      >
+                        <Monitor size={20} color="#ffffff" />
+                      </LinearGradient>
+                    </View>
+                    
+                    <View style={styles.presentationInfo}>
+                      <Text style={styles.presentationTitle} numberOfLines={1}>
                         {presentation.name}
                       </Text>
                       
                       <View style={styles.presentationMeta}>
                         <View style={styles.metaItem}>
-                          <Monitor size={12} color="#ffffff" />
-                          <Text style={styles.presentationMetaText}>
+                          <Monitor size={12} color="#9ca3af" />
+                          <Text style={styles.metaText}>
                             {presentation.slide_count} slide{presentation.slide_count > 1 ? 's' : ''}
                           </Text>
                         </View>
-                      </View>
-                      
-                      <View style={styles.presentationAction}>
-                        <Play size={16} color="#ffffff" />
+                        
+                        <View style={styles.metaItem}>
+                          <Clock size={12} color="#9ca3af" />
+                          <Text style={styles.metaText}>
+                            {new Date(presentation.created_at).toLocaleDateString()}
+                          </Text>
+                        </View>
                       </View>
                     </View>
-                  </LinearGradient>
+                    
+                    <View style={styles.presentationAction}>
+                      <Play size={16} color="#3b82f6" />
+                    </View>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -695,29 +724,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   presentationsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginHorizontal: -6,
+    gap: 12,
   },
   presentationCard: {
-    width: '31%',
-    marginHorizontal: '1%',
-    marginBottom: 12,
+    backgroundColor: '#1a1a1a',
     borderRadius: 12,
-    overflow: 'hidden',
-    height: 120,
-  },
-  presentationCardGradient: {
-    flex: 1,
+    marginBottom: 8,
   },
   presentationCardContent: {
-    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 12,
-    justifyContent: 'space-between',
+  },
+  presentationIconContainer: {
+    marginRight: 12,
+  },
+  presentationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  presentationInfo: {
+    flex: 1,
   },
   presentationTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
     marginBottom: 4,
@@ -736,19 +769,11 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginLeft: 4,
   },
-  presentationMetaText: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginLeft: 4,
-  },
   presentationAction: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderRadius: 16,
-    width: 28,
-    height: 28,
+    width: 32,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },

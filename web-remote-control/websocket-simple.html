@@ -45,16 +45,6 @@
         .error {
             color: red;
         }
-        .info {
-            color: black;
-        }
-        .button-group {
-            margin-top: 10px;
-        }
-        button {
-            padding: 5px 10px;
-            margin-right: 5px;
-        }
     </style>
 </head>
 <body>
@@ -70,20 +60,9 @@
     </div>
     
     <div style="margin-top: 20px;">
-        <label for="device-id">ID de l'appareil (pour test):</label>
-        <input type="text" id="device-id" value="firetv_test_123" style="width: 300px;">
-    </div>
-    
-    <div style="margin-top: 20px;">
         <label for="message">Message:</label>
         <input type="text" id="message" value='{"type":"ping","timestamp":"2025-06-28T12:00:00Z"}' style="width: 400px;">
         <button id="send" disabled>Envoyer</button>
-    </div>
-    
-    <div class="button-group">
-        <button id="send-ping" disabled>Envoyer Ping</button>
-        <button id="register-device" disabled>Enregistrer Appareil</button>
-        <button id="register-admin" disabled>Enregistrer Admin</button>
     </div>
     
     <div id="log"></div>
@@ -92,14 +71,10 @@
         // Éléments DOM
         const statusDiv = document.getElementById('status');
         const serverUrlInput = document.getElementById('server-url');
-        const deviceIdInput = document.getElementById('device-id');
         const connectButton = document.getElementById('connect');
         const disconnectButton = document.getElementById('disconnect');
         const messageInput = document.getElementById('message');
         const sendButton = document.getElementById('send');
-        const sendPingButton = document.getElementById('send-ping');
-        const registerDeviceButton = document.getElementById('register-device');
-        const registerAdminButton = document.getElementById('register-admin');
         const logDiv = document.getElementById('log');
         
         // WebSocket
@@ -135,14 +110,11 @@
                 
                 socket.onopen = function() {
                     updateStatus('connected', 'Connecté');
-                    addLog('Connecté au serveur WebSocket', 'info');
+                    addLog('Connecté au serveur WebSocket');
                     
                     connectButton.disabled = true;
                     disconnectButton.disabled = false;
                     sendButton.disabled = false;
-                    sendPingButton.disabled = false;
-                    registerDeviceButton.disabled = false;
-                    registerAdminButton.disabled = false;
                 };
                 
                 socket.onmessage = function(event) {
@@ -158,20 +130,17 @@
                 
                 socket.onclose = function(event) {
                     updateStatus('disconnected', 'Déconnecté');
-                    addLog(`Déconnecté du serveur WebSocket (Code: ${event.code}, Raison: ${event.reason || 'Non spécifiée'})`, 'error');
+                    addLog(`Déconnecté du serveur WebSocket (Code: ${event.code}, Raison: ${event.reason || 'Non spécifiée'})`);
                     
                     connectButton.disabled = false;
                     disconnectButton.disabled = true;
                     sendButton.disabled = true;
-                    sendPingButton.disabled = true;
-                    registerDeviceButton.disabled = true;
-                    registerAdminButton.disabled = true;
                     
                     socket = null;
                 };
                 
                 socket.onerror = function(error) {
-                    addLog(`Erreur WebSocket`, 'error');
+                    addLog(`Erreur WebSocket: ${error}`, 'error');
                     console.error('Erreur WebSocket:', error);
                 };
                 
@@ -210,92 +179,10 @@
             }
         }
         
-        function sendPing() {
-            if (!socket) {
-                addLog('Non connecté au serveur WebSocket', 'error');
-                return;
-            }
-            
-            const ping = {
-                type: 'ping',
-                timestamp: new Date().toISOString()
-            };
-            
-            try {
-                socket.send(JSON.stringify(ping));
-                addLog(`Ping envoyé: ${JSON.stringify(ping)}`, 'sent');
-            } catch (error) {
-                addLog(`Erreur lors de l'envoi du ping: ${error.message}`, 'error');
-                console.error('Erreur:', error);
-            }
-        }
-        
-        function registerDevice() {
-            if (!socket) {
-                addLog('Non connecté au serveur WebSocket', 'error');
-                return;
-            }
-            
-            const deviceId = deviceIdInput.value;
-            
-            if (!deviceId) {
-                addLog('ID de l\'appareil requis', 'error');
-                return;
-            }
-            
-            const register = {
-                type: 'register_device',
-                device_id: deviceId,
-                device_name: `Fire TV ${deviceId}`,
-                timestamp: new Date().toISOString()
-            };
-            
-            try {
-                socket.send(JSON.stringify(register));
-                addLog(`Enregistrement appareil envoyé: ${JSON.stringify(register)}`, 'sent');
-            } catch (error) {
-                addLog(`Erreur lors de l'enregistrement: ${error.message}`, 'error');
-                console.error('Erreur:', error);
-            }
-        }
-        
-        function registerAdmin() {
-            if (!socket) {
-                addLog('Non connecté au serveur WebSocket', 'error');
-                return;
-            }
-            
-            const register = {
-                type: 'register_admin',
-                timestamp: new Date().toISOString()
-            };
-            
-            try {
-                socket.send(JSON.stringify(register));
-                addLog(`Enregistrement admin envoyé: ${JSON.stringify(register)}`, 'sent');
-            } catch (error) {
-                addLog(`Erreur lors de l'enregistrement: ${error.message}`, 'error');
-                console.error('Erreur:', error);
-            }
-        }
-        
         // Événements
         connectButton.addEventListener('click', connect);
         disconnectButton.addEventListener('click', disconnect);
         sendButton.addEventListener('click', sendMessage);
-        sendPingButton.addEventListener('click', sendPing);
-        registerDeviceButton.addEventListener('click', registerDevice);
-        registerAdminButton.addEventListener('click', registerAdmin);
-        
-        // Ajouter des informations sur le navigateur
-        addLog('Informations navigateur: ' + navigator.userAgent);
-        
-        // Vérifier le support WebSocket
-        if ('WebSocket' in window) {
-            addLog('WebSocket est supporté par ce navigateur');
-        } else {
-            addLog('WebSocket n\'est PAS supporté par ce navigateur', 'error');
-        }
     </script>
 </body>
 </html>

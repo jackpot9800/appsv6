@@ -11,8 +11,6 @@
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
   <!-- Permission pour empêcher la mise en veille -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-  <!-- Permission pour démarrer au boot -->
-  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   
   <!-- Support Fire TV / Android TV -->
   <uses-feature
@@ -65,18 +63,5 @@
         <data android:scheme="com.presentationkiosk.firetv"/>
       </intent-filter>
     </activity>
-    
-    <!-- Récepteur de démarrage pour lancer l'application au boot -->
-    <receiver
-        android:name=".BootReceiver"
-        android:enabled="true"
-        android:exported="true"
-        android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
-        <intent-filter>
-            <action android:name="android.intent.action.BOOT_COMPLETED" />
-            <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-            <category android:name="android.intent.category.DEFAULT" />
-        </intent-filter>
-    </receiver>
   </application>
 </manifest>

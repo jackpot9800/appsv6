@@ -97,8 +97,6 @@ class ApiService {
   private directFetchMode: boolean = false; // Mode fetch direct pour contourner les problèmes
   private localIpAddress: string | null = null;
   private externalIpAddress: string | null = null;
-  private lastConnectionTime: number = 0;
-  private connectionRetryDelay: number = 5000; // 5 secondes entre les tentatives
 
   async initialize() {
     try {
@@ -414,14 +412,6 @@ class ApiService {
         return null;
       }
 
-      // Vérifier si on peut faire une requête (limiter les tentatives trop fréquentes)
-      const now = Date.now();
-      if (now - this.lastConnectionTime < this.connectionRetryDelay) {
-        console.log('Skipping assignment check - too soon after last attempt');
-        return null;
-      }
-      this.lastConnectionTime = now;
-
       console.log('=== CHECKING FOR ASSIGNED PRESENTATION ===');
       const endpoint = this.getEndpoint('/device/assigned-presentation');
       console.log('Using endpoint:', endpoint);
@@ -477,14 +467,6 @@ class ApiService {
         console.log('Default presentation check disabled or not ready');
         return null;
       }
-
-      // Vérifier si on peut faire une requête (limiter les tentatives trop fréquentes)
-      const now = Date.now();
-      if (now - this.lastConnectionTime < this.connectionRetryDelay) {
-        console.log('Skipping default presentation check - too soon after last attempt');
-        return null;
-      }
-      this.lastConnectionTime = now;
 
       console.log('=== CHECKING FOR DEFAULT PRESENTATION ===');
       const endpoint = this.getEndpoint('/device/default-presentation');
@@ -588,7 +570,7 @@ class ApiService {
   /**
    * Debug de l'appareil via l'API
    */
-  async getDebugInfo(): Promise<any> {
+  async debugDevice(): Promise<any> {
     try {
       if (!this.baseUrl || !this.deviceId) {
         return {
