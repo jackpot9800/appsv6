@@ -73,6 +73,7 @@ export default function PresentationScreen() {
   const performanceMonitorRef = useRef<NodeJS.Timeout | null>(null);
   const slideChangeInProgressRef = useRef<boolean>(false);
   const keepScreenAwakeRef = useRef<NodeJS.Timeout | null>(null);
+  const keepAwakeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Nettoyage complet des ressources
   const cleanupResources = useCallback(() => {
@@ -97,6 +98,11 @@ export default function PresentationScreen() {
     if (keepScreenAwakeRef.current) {
       clearInterval(keepScreenAwakeRef.current);
       keepScreenAwakeRef.current = null;
+    }
+    
+    if (keepAwakeIntervalRef.current) {
+      clearInterval(keepAwakeIntervalRef.current);
+      keepAwakeIntervalRef.current = null;
     }
     
     // Désactiver le gestionnaire TV
@@ -142,6 +148,7 @@ export default function PresentationScreen() {
   const startKeepAwakeTimer = useCallback(() => {
     if (keepScreenAwakeRef.current) {
       clearInterval(keepScreenAwakeRef.current);
+      keepScreenAwakeRef.current = null;
     }
     
     // Réactiver le mode anti-veille toutes les 30 secondes pour s'assurer que l'écran reste allumé
@@ -152,6 +159,19 @@ export default function PresentationScreen() {
         activateKeepAwake();
       }
     }, 30000);
+    
+    // Ajouter un intervalle plus fréquent pour les appareils Android
+    if (Platform.OS === 'android' && keepAwakeEnabled) {
+      if (keepAwakeIntervalRef.current) {
+        clearInterval(keepAwakeIntervalRef.current);
+      }
+      
+      // Réactiver le mode anti-veille toutes les 5 secondes sur Android
+      keepAwakeIntervalRef.current = setInterval(() => {
+        console.log('Android: Refreshing keep awake mode more frequently');
+        activateKeepAwake();
+      }, 5000);
+    }
   }, [keepAwakeEnabled]);
 
   // Charger le paramètre de mode anti-veille
@@ -183,6 +203,10 @@ export default function PresentationScreen() {
         if (keepScreenAwakeRef.current) {
           clearInterval(keepScreenAwakeRef.current);
           keepScreenAwakeRef.current = null;
+        }
+        if (keepAwakeIntervalRef.current) {
+          clearInterval(keepAwakeIntervalRef.current);
+          keepAwakeIntervalRef.current = null;
         }
       }
     }

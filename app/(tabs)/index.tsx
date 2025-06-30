@@ -42,6 +42,7 @@ export default function HomeScreen() {
   const [recentPresentations, setRecentPresentations] = useState<Presentation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [webSocketStatus, setWebSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -90,7 +91,7 @@ export default function HomeScreen() {
       apiService.stopAssignmentCheck();
       apiService.stopDefaultPresentationCheck();
     };
-  }, []);
+  }, [retryCount]);
   
   // Vérifier périodiquement le statut WebSocket
   useEffect(() => {
@@ -215,24 +216,7 @@ export default function HomeScreen() {
   const refreshData = async () => {
     setLoading(true);
     setError(null);
-    
-    try {
-      await checkConnection();
-      await loadAssignedPresentation();
-      await loadDefaultPresentation();
-      await loadRecentPresentations();
-      
-      // Vérifier le statut WebSocket
-      const wsService = getWebSocketService();
-      if (wsService) {
-        setWebSocketStatus(wsService.isConnectedToServer() ? 'connected' : 'disconnected');
-      }
-    } catch (error) {
-      console.error('Error refreshing data:', error);
-      setError(error instanceof Error ? error.message : 'Erreur lors de l\'actualisation');
-    } finally {
-      setLoading(false);
-    }
+    setRetryCount(prev => prev + 1);
   };
 
   if (loading) {
