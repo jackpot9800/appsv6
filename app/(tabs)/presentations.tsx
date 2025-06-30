@@ -7,11 +7,18 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  Dimensions,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Monitor, Play, Clock, WifiOff, CircleAlert as AlertCircle, RefreshCw, Settings } from 'lucide-react-native';
 import { apiService, Presentation } from '@/services/ApiService';
+
+const { width } = Dimensions.get('window');
+const CARD_MARGIN = 8;
+const NUM_COLUMNS = 3;
+const CARD_WIDTH = (width - (CARD_MARGIN * (NUM_COLUMNS + 1) * 2)) / NUM_COLUMNS;
 
 export default function PresentationsScreen() {
   const [presentations, setPresentations] = useState<Presentation[]>([]);
@@ -68,48 +75,38 @@ export default function PresentationsScreen() {
 
   const renderPresentationItem = ({ item }: { item: Presentation }) => (
     <TouchableOpacity
-      style={styles.presentationItem}
+      style={styles.presentationCard}
       onPress={() => playPresentation(item)}
       activeOpacity={0.8}
     >
-      <View style={styles.itemContent}>
-        <View style={styles.iconContainer}>
-          <LinearGradient
-            colors={['#4f46e5', '#7c3aed']}
-            style={styles.iconGradient}
-          >
-            <Monitor size={24} color="#ffffff" />
-          </LinearGradient>
-        </View>
-
-        <View style={styles.itemDetails}>
-          <Text style={styles.itemTitle} numberOfLines={2}>
-            {item.name}
-          </Text>
-          <Text style={styles.itemDescription} numberOfLines={2}>
-            {item.description || 'Aucune description disponible'}
-          </Text>
+      <LinearGradient
+        colors={['#4f46e5', '#7c3aed']}
+        style={styles.cardGradient}
+      >
+        <View style={styles.cardContent}>
+          <View style={styles.cardHeader}>
+            <View style={styles.iconContainer}>
+              <Monitor size={20} color="#ffffff" />
+            </View>
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {item.name}
+            </Text>
+          </View>
           
-          <View style={styles.itemMeta}>
+          <View style={styles.cardFooter}>
             <View style={styles.metaItem}>
-              <Monitor size={14} color="#9ca3af" />
+              <Monitor size={12} color="#ffffff" />
               <Text style={styles.metaText}>
                 {item.slide_count} slide{item.slide_count > 1 ? 's' : ''}
               </Text>
             </View>
-            <View style={styles.metaItem}>
-              <Clock size={14} color="#9ca3af" />
-              <Text style={styles.metaText}>
-                {new Date(item.created_at).toLocaleDateString('fr-FR')}
-              </Text>
+            
+            <View style={styles.playButton}>
+              <Play size={16} color="#ffffff" fill="#ffffff" />
             </View>
           </View>
         </View>
-
-        <View style={styles.playIconContainer}>
-          <Play size={20} color="#3b82f6" fill="#3b82f6" />
-        </View>
-      </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
@@ -185,6 +182,8 @@ export default function PresentationsScreen() {
         }
         ListEmptyComponent={renderEmptyState}
         showsVerticalScrollIndicator={false}
+        numColumns={NUM_COLUMNS}
+        columnWrapperStyle={styles.columnWrapper}
       />
     </View>
   );
@@ -216,65 +215,69 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
   },
   listContent: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
     paddingBottom: 20,
   },
-  presentationItem: {
-    backgroundColor: '#1a1a1a',
+  columnWrapper: {
+    justifyContent: 'flex-start',
+    marginHorizontal: CARD_MARGIN,
+  },
+  presentationCard: {
+    width: CARD_WIDTH,
+    height: 180,
+    margin: CARD_MARGIN,
     borderRadius: 12,
-    marginBottom: 12,
     overflow: 'hidden',
   },
-  itemContent: {
+  cardGradient: {
+    flex: 1,
+    borderRadius: 12,
+  },
+  cardContent: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'space-between',
+  },
+  cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
+    alignItems: 'flex-start',
   },
   iconContainer: {
-    marginRight: 16,
-  },
-  iconGradient: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 8,
   },
-  itemDetails: {
+  cardTitle: {
     flex: 1,
-    marginRight: 12,
-  },
-  itemTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
     marginBottom: 4,
   },
-  itemDescription: {
-    fontSize: 14,
-    color: '#9ca3af',
-    marginBottom: 8,
-    lineHeight: 18,
-  },
-  itemMeta: {
+  cardFooter: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
   metaItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 16,
   },
   metaText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: '#ffffff',
     marginLeft: 4,
+    opacity: 0.8,
   },
-  playIconContainer: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
+  playButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },

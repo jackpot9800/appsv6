@@ -11,6 +11,7 @@ interface WebSocketOptions {
     autoReconnect?: boolean;
     reconnectInterval?: number;
     pingInterval?: number;
+    maxReconnectAttempts?: number;
 }
 
 // Interface pour les messages WebSocket
@@ -27,13 +28,14 @@ export class WebSocketService {
     private autoReconnect: boolean;
     private reconnectInterval: number;
     private pingInterval: number;
+    private maxReconnectAttempts: number;
     
     private socket: WebSocket | null = null;
     private isConnected: boolean = false;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private pingTimer: NodeJS.Timeout | null = null;
     private connectionAttempts: number = 0;
-    private maxConnectionAttempts: number = 5;
+    private lastPingTime: number = 0;
     
     private onConnectCallbacks: (() => void)[] = [];
     private onDisconnectCallbacks: (() => void)[] = [];
@@ -46,6 +48,7 @@ export class WebSocketService {
         this.autoReconnect = options.autoReconnect !== false;
         this.reconnectInterval = options.reconnectInterval || 5000;
         this.pingInterval = options.pingInterval || 30000;
+        this.maxReconnectAttempts = options.maxReconnectAttempts || 10;
         
         // Lier les méthodes au contexte actuel
         this.connect = this.connect.bind(this);
@@ -115,12 +118,12 @@ export class WebSocketService {
                 this.notifyDisconnect();
                 
                 // Reconnecter automatiquement si activé
-                if (this.autoReconnect && this.connectionAttempts < this.maxConnectionAttempts) {
+                if (this.autoReconnect && this.connectionAttempts < this.maxReconnectAttempts) {
                     this.connectionAttempts++;
-                    console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxConnectionAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
+                    console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxReconnectAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
                     this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
-                } else if (this.connectionAttempts >= this.maxConnectionAttempts) {
-                    console.log(`[WebSocket] Nombre maximum de tentatives atteint (${this.maxConnectionAttempts}), abandon des tentatives de reconnexion`);
+                } else if (this.connectionAttempts >= this.maxReconnectAttempts) {
+                    console.log(`[WebSocket] Nombre maximum de tentatives atteint (${this.maxReconnectAttempts}), abandon des tentatives de reconnexion`);
                 }
             };
             
@@ -134,9 +137,9 @@ export class WebSocketService {
             this.notifyDisconnect();
             
             // Reconnecter automatiquement si activé
-            if (this.autoReconnect && this.connectionAttempts < this.maxConnectionAttempts) {
+            if (this.autoReconnect && this.connectionAttempts < this.maxReconnectAttempts) {
                 this.connectionAttempts++;
-                console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxConnectionAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
+                console.log(`[WebSocket] Tentative de reconnexion ${this.connectionAttempts}/${this.maxReconnectAttempts} dans ${this.reconnectInterval / 1000} secondes...`);
                 this.reconnectTimer = setTimeout(this.reconnect, this.reconnectInterval);
             }
         }
@@ -203,6 +206,7 @@ export class WebSocketService {
     
     // Envoyer un ping pour maintenir la connexion active
     private ping(): void {
+        this.lastPingTime = Date.now();
         this.sendMessage({
             type: 'ping',
             device_id: this.deviceId,
@@ -304,6 +308,11 @@ export class WebSocketService {
     public getServerUrl(): string {
         return this.serverUrl;
     }
+    
+    // Obtenir le temps écoulé depuis le dernier ping
+    public getTimeSinceLastPing(): number {
+        return Date.now() - this.lastPingTime;
+    }
 }
 
 // Instance unique du service WebSocket
@@ -329,6 +338,7 @@ export const initWebSocketService = async (): Promise<WebSocketService> => {
     if (!serverUrl) {
         const apiUrl = apiService.getServerUrl();
         if (apiUrl) {
+            // Remplacer http:// par ws:// et https:// par wss://
             serverUrl = apiUrl.replace(/^http/, 'ws').replace(/\/index\.php$/, '/websocket');
             await AsyncStorage.setItem('websocket_url', serverUrl);
         } else {
@@ -343,7 +353,8 @@ export const initWebSocketService = async (): Promise<WebSocketService> => {
         deviceName: apiService.getDeviceName() || `Fire TV ${apiService.getDeviceId().substring(0, 8)}`,
         autoReconnect: true,
         reconnectInterval: 5000,
-        pingInterval: 30000
+        pingInterval: 30000,
+        maxReconnectAttempts: 5
     });
     
     // Configurer les callbacks
