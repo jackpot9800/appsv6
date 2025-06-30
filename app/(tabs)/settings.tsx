@@ -15,7 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiService } from '@/services/ApiService';
 import { statusService } from '@/services/StatusService';
 import { getWebSocketService, initWebSocketService } from '@/services/WebSocketService';
-import { Monitor, Server, Radio, Wifi, RefreshCw, Info, Check, X } from 'lucide-react-native';
+import { Monitor, Server, Radio, Wifi, RefreshCw, Info, Check, X, Power } from 'lucide-react-native';
 
 export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState('');
@@ -31,6 +31,7 @@ export default function SettingsScreen() {
   const [webSocketEnabled, setWebSocketEnabled] = useState(true);
   const [webSocketUrl, setWebSocketUrl] = useState('');
   const [webSocketConnected, setWebSocketConnected] = useState(false);
+  const [autoStartEnabled, setAutoStartEnabled] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -83,6 +84,10 @@ export default function SettingsScreen() {
           setWebSocketUrl(defaultWsUrl);
         }
       }
+
+      // Charger le paramètre de démarrage automatique
+      const autoStart = await AsyncStorage.getItem('auto_start_enabled');
+      setAutoStartEnabled(autoStart !== 'false'); // Par défaut activé
 
       // Vérifier si le WebSocket est connecté
       const wsService = getWebSocketService();
@@ -212,6 +217,30 @@ export default function SettingsScreen() {
         wsService.disconnect();
         setWebSocketConnected(false);
       }
+    }
+  };
+
+  const toggleAutoStart = async (value: boolean) => {
+    setAutoStartEnabled(value);
+    await AsyncStorage.setItem('auto_start_enabled', value.toString());
+    
+    if (Platform.OS === 'android') {
+      if (value) {
+        Alert.alert(
+          'Démarrage automatique activé',
+          'L\'application se lancera automatiquement au démarrage de l\'appareil Fire TV.'
+        );
+      } else {
+        Alert.alert(
+          'Démarrage automatique désactivé',
+          'L\'application ne se lancera plus automatiquement au démarrage.'
+        );
+      }
+    } else {
+      Alert.alert(
+        'Information',
+        'Le démarrage automatique n\'est disponible que sur les appareils Fire TV/Android.'
+      );
     }
   };
 
@@ -438,6 +467,18 @@ export default function SettingsScreen() {
             thumbColor={keepAwakeEnabled ? '#10b981' : '#f4f4f5'}
           />
         </View>
+
+        {Platform.OS === 'android' && (
+          <View style={styles.switchContainer}>
+            <Text style={styles.switchLabel}>Démarrage automatique</Text>
+            <Switch
+              value={autoStartEnabled}
+              onValueChange={toggleAutoStart}
+              trackColor={{ false: '#d1d5db', true: '#93c5fd' }}
+              thumbColor={autoStartEnabled ? '#3b82f6' : '#f4f4f5'}
+            />
+          </View>
+        )}
       </View>
 
       {/* Actions avancées */}
@@ -527,6 +568,11 @@ export default function SettingsScreen() {
             <View style={styles.debugItem}>
               <Text style={styles.debugLabel}>Plateforme:</Text>
               <Text style={styles.debugValue}>{Platform.OS} {Platform.Version}</Text>
+            </View>
+
+            <View style={styles.debugItem}>
+              <Text style={styles.debugLabel}>Démarrage auto:</Text>
+              <Text style={styles.debugValue}>{autoStartEnabled ? 'Activé' : 'Désactivé'}</Text>
             </View>
           </View>
         )}
